@@ -996,6 +996,10 @@ button.tasks-tab-btn {
       </div>
       <!-- These buttons hide on mobile — accessible via bottom nav or ⋯ More -->
       <button class="tasks-tab-btn hide-mobile" onclick="jumpToTasks()" title="Go to Tasks">☑ Tasks</button>
+      <button class="tasks-tab-btn hide-mobile" onclick="jumpToLeaves()" title="Go to Leaves">🌴 Leaves</button>
+      <button class="tasks-tab-btn hide-mobile" onclick="setView('upcoming',null)" title="Upcoming">🗓 Upcoming</button>
+      <button class="tasks-tab-btn hide-mobile" onclick="setView('notes',null)" title="Note">📝 Note</button>
+      <button class="tasks-tab-btn hide-mobile" onclick="setView('migrate',null)" title="Migrate">⇄ Migrate</button>
       <button class="btn btn-ghost btn-sm hide-mobile" onclick="doExportTxt()">⬇ Export .txt</button>
       <button class="btn btn-ghost btn-sm hide-mobile" onclick="doExportJSON()" title="Save all your data as a backup file you can re-import">⬇ Export data</button>
       <button class="btn btn-ghost btn-sm hide-mobile" onclick="openImportDialog()" title="Restore data from a previously exported file">⬆ Import data</button>
@@ -2281,6 +2285,8 @@ function openMobileMore(){
   m.innerHTML=`<div class="modal" onclick="event.stopPropagation()" style="max-width:320px;padding:16px">
     <h2 style="margin-bottom:14px">More options</h2>
     <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-ghost" onclick="setView('migrate',null);document.getElementById('mobile-more-modal').remove()">⇄ Migrate Stories</button>
+      <button class="btn btn-ghost" onclick="expandHeader();setTimeout(()=>{document.getElementById('search-input')?.focus();},100);document.getElementById('mobile-more-modal').remove()">🔍 Search</button>
       <button class="btn btn-ghost" onclick="openStaffSettings();document.getElementById('mobile-more-modal').remove()">👥 Edit Staff Names</button>
       <button class="btn btn-ghost" onclick="doExportJSON();document.getElementById('mobile-more-modal').remove()">⬇ Export Data (backup)</button>
       <button class="btn btn-ghost" onclick="openImportDialog();document.getElementById('mobile-more-modal').remove()">⬆ Import Data</button>
@@ -2301,28 +2307,28 @@ function bnbNav(tab){
   if(tab==='today'){
     setView('today',null);
   } else if(tab==='tasks'){
-    if(ui.view!=='today'){ setView('today',null); setTimeout(()=>{ document.getElementById('tasks-section')?.scrollIntoView({behavior:'smooth',block:'start'}); },250); }
-    else { document.getElementById('tasks-section')?.scrollIntoView({behavior:'smooth',block:'start'}); }
+    ui.view='tasks'; render(); window.scrollTo({top:0});
   } else if(tab==='leaves'){
-    if(ui.view!=='today'){ setView('today',null); setTimeout(()=>{ document.getElementById('leaves-section')?.scrollIntoView({behavior:'smooth',block:'start'}); },250); }
-    else { document.getElementById('leaves-section')?.scrollIntoView({behavior:'smooth',block:'start'}); }
-  } else if(tab==='search'){
-    expandHeader();
-    setTimeout(()=>{ const el=document.getElementById('search-input'); if(el){ el.focus(); el.select(); } },100);
-  } else if(tab==='migrate'){
-    setView('migrate',null);
+    ui.view='leaves'; render(); window.scrollTo({top:0});
+  } else if(tab==='upcoming'){
+    ui.openSections.add('upcoming');
+    ui.view='upcoming'; render(); window.scrollTo({top:0});
+  } else if(tab==='notes'){
+    ui.openSections.add('remarks');
+    ui.view='notes'; render(); window.scrollTo({top:0});
   }
-  // updateBnbActive is called by render() — no need to call again here
+  updateBnbActive();
 }
 function updateBnbActive(){
-  const tabs=['today','tasks','leaves','search','migrate'];
-  tabs.forEach(t=>{
+  ['today','tasks','leaves','upcoming','notes'].forEach(t=>{
     const el=document.getElementById('bnb-'+t);
     if(!el) return;
     const active=
-      (t==='today'   && ui.view==='today')   ||
-      (t==='migrate' && ui.view==='migrate')  ||
-      (t==='search'  && ui.view==='search');
+      (t==='today'    && (ui.view==='today'||ui.view==='archive'))  ||
+      (t==='tasks'    && ui.view==='tasks')    ||
+      (t==='leaves'   && ui.view==='leaves')   ||
+      (t==='upcoming' && ui.view==='upcoming') ||
+      (t==='notes'    && ui.view==='notes');
     el.classList.toggle('bnb-active', active);
   });
 }
@@ -2411,6 +2417,26 @@ function updateDateHeader(){
     hdEl.textContent='Move or Copy to Archive';
     hdEl.className='date-full sz-normal';
     ctEl.textContent='Select stories → pick destination';
+  } else if(ui.view==='tasks'){
+    wdEl.textContent=now.toLocaleDateString('en-GB',{weekday:'long'}).toUpperCase();
+    hdEl.textContent='Tasks';
+    hdEl.className='date-full sz-normal';
+    ctEl.textContent='Your task list';
+  } else if(ui.view==='leaves'){
+    wdEl.textContent=now.toLocaleDateString('en-GB',{weekday:'long'}).toUpperCase();
+    hdEl.textContent='Leaves';
+    hdEl.className='date-full sz-normal';
+    ctEl.textContent='Staff leave tracker';
+  } else if(ui.view==='upcoming'){
+    wdEl.textContent=now.toLocaleDateString('en-GB',{weekday:'long'}).toUpperCase();
+    hdEl.textContent='Upcoming';
+    hdEl.className='date-full sz-normal';
+    ctEl.textContent='Future stories & events';
+  } else if(ui.view==='notes'){
+    wdEl.textContent=now.toLocaleDateString('en-GB',{weekday:'long'}).toUpperCase();
+    hdEl.textContent='Note';
+    hdEl.className='date-full sz-normal';
+    ctEl.textContent='Carry-forward notes';
   }
 }
 function toggleAccordion(key){
@@ -2703,6 +2729,10 @@ function render(){
   else if(ui.view==='archive') html+=renderArchiveHTML(ui.archiveKey);
   else if(ui.view==='migrate') html+=renderMigrateHTML();
   else if(ui.view==='search')  html+=renderSearchHTML();
+  else if(ui.view==='tasks')   html+=renderTasksSection();
+  else if(ui.view==='leaves')  html+=renderLeavesSection();
+  else if(ui.view==='upcoming') html+=renderUpcomingView();
+  else if(ui.view==='notes')   html+=renderNotesView();
   html+='</div>';
   mc.innerHTML=html;
   // Inject datalists for staff names (hidden, referenced by form inputs)
@@ -2908,7 +2938,6 @@ function clearSearch(){
 /* ─── TODAY ─── */
 function renderTodayHTML(){
   let html='';
-  // Backup banners placeholder
   html+=`<div id="backup-banners"></div>`;
 
   const carried=getCarriedStories();
@@ -2929,14 +2958,26 @@ function renderTodayHTML(){
     </div>`;
   }
   html+=`<div style="display:flex;justify-content:flex-end;gap:7px;margin-bottom:12px;flex-wrap:wrap">
-    <button class="btn btn-ghost btn-sm" onclick="doEmailAll()">✉ Email All</button>
-    <button class="btn btn-ghost btn-sm" onclick="doExportTxt()">⬇ Export</button>
+    <button class="btn btn-ghost btn-sm hide-mobile" onclick="doEmailAll()">✉ Email All</button>
+    <button class="btn btn-ghost btn-sm hide-mobile" onclick="doExportTxt()">⬇ Export</button>
   </div>`;
-  SECTIONS.forEach(sec=>{ html+=renderAccordion(sec,null); });
-  html+=renderRemarksAccordion();
-  html+=renderTasksSection();
-  html+=renderLeavesSection();
+
+  // Today shows only IBU/Other Stories and Requests — Tasks, Leaves, Upcoming, Note are in bottom nav
+  SECTIONS.filter(s=>!s.isUpcoming&&!s.hidden).forEach(sec=>{ html+=renderAccordion(sec,null); });
   return html;
+}
+
+function renderUpcomingView(){
+  // Full-page view for Upcoming section
+  const sec=SECTIONS.find(s=>s.key==='upcoming');
+  return`<div style="padding-bottom:12px">
+    ${renderAccordion(sec,null)}
+  </div>`;
+}
+
+function renderNotesView(){
+  // Full-page view for Note section
+  return renderRemarksAccordion();
 }
 
 /* ─── ARCHIVE ─── */
@@ -3226,15 +3267,8 @@ function toggleStorySubsection(sec, id, archKey){
   moveStoryToSection(sec,id,toSec,archKey,'move');
 }
 
-function jumpToTasks(){
-  // If not on today view, switch to it first then scroll
-  if(ui.view!=='today'){ setView('today',null); setTimeout(()=>document.getElementById('tasks-section')?.scrollIntoView({behavior:'smooth',block:'start'}),200); return; }
-  document.getElementById('tasks-section')?.scrollIntoView({behavior:'smooth',block:'start'});
-}
-function jumpToLeaves(){
-  if(ui.view!=='today'){ setView('today',null); setTimeout(()=>document.getElementById('leaves-section')?.scrollIntoView({behavior:'smooth',block:'start'}),200); return; }
-  document.getElementById('leaves-section')?.scrollIntoView({behavior:'smooth',block:'start'});
-}
+function jumpToTasks(){ bnbNav('tasks'); }
+function jumpToLeaves(){ bnbNav('leaves'); }
 
 /* ════════════════════════════════════════
    TASKS CRUD
@@ -4586,11 +4620,11 @@ document.addEventListener('DOMContentLoaded', init);
   <button class="bnb-item" id="bnb-leaves" onclick="bnbNav('leaves')">
     <span class="bnb-icon">🌴</span>Leaves
   </button>
-  <button class="bnb-item" id="bnb-search" onclick="bnbNav('search')">
-    <span class="bnb-icon">🔍</span>Search
+  <button class="bnb-item" id="bnb-upcoming" onclick="bnbNav('upcoming')">
+    <span class="bnb-icon">🗓</span>Upcoming
   </button>
-  <button class="bnb-item" id="bnb-migrate" onclick="bnbNav('migrate')">
-    <span class="bnb-icon">⇄</span>Migrate
+  <button class="bnb-item" id="bnb-notes" onclick="bnbNav('notes')">
+    <span class="bnb-icon">📝</span>Note
   </button>
 </nav>
 </body>
