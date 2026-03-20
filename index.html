@@ -103,9 +103,10 @@ body {
 /* The collapsible part - date row + strip + filters */
 .header-collapsible {
   overflow: hidden;
-  max-height: 300px;
-  transition: max-height .3s ease, opacity .25s ease;
+  max-height: 500px;
   opacity: 1;
+  transition: max-height .25s ease, opacity .2s ease;
+  will-change: max-height, opacity;
 }
 .header-collapsible.hdr-collapsed {
   max-height: 0;
@@ -163,6 +164,7 @@ body {
   display: flex; align-items: flex-start;
   padding: 12px 22px 8px; gap: 14px;
 }
+@media(max-width:720px){ .date-display { display: none; } }
 .date-main { flex: 1; }
 .date-weekday {
   font-size: 11px; font-family: var(--mono);
@@ -527,6 +529,8 @@ body {
 .cfield-label { font-size: 9.5px; color: var(--text3); text-transform: uppercase; letter-spacing: .7px; font-family: var(--mono); margin-bottom: 2px; }
 .cfield-value { font-size: 12.5px; color: var(--text); }
 .card-remarks { font-size: 12px; color: var(--text2); margin-top: 9px; font-style: italic; line-height: 1.55; }
+.card-remarks-collapsed { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.card-remarks-expand { font-size: 11px; color: var(--accent); cursor: pointer; font-style: normal; margin-left: 4px; }
 .card-links { margin-top: 9px; display: flex; gap: 5px; flex-wrap: wrap; }
 .link-pill {
   display: inline-flex; align-items: center; gap: 4px;
@@ -984,6 +988,20 @@ button.tasks-tab-btn {
 .bnb-item:active { background: var(--surface2); }
 .bnb-item.bnb-active { color: var(--accent); }
 .bnb-icon { font-size: 18px; line-height: 1; }
+/* ── Travel ── */
+.travel-segment{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 13px;margin-bottom:8px;}
+.travel-segment.ts-cab{border-left:3px solid #0ea5e9;}
+.travel-segment.ts-flight{border-left:3px solid #8b5cf6;}
+.travel-segment.ts-hotel{border-left:3px solid #10b981;}
+.travel-segment.ts-expense{border-left:3px solid #f59e0b;}
+.travel-seg-head{display:flex;align-items:center;gap:8px;cursor:pointer;}
+.travel-type-badge{font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:12px;flex-shrink:0;}
+.ttb-cab{background:rgba(14,165,233,.12);color:#0369a1;}
+.ttb-flight{background:rgba(139,92,246,.12);color:#7c3aed;}
+.ttb-hotel{background:rgba(16,185,129,.12);color:#047857;}
+.ttb-expense{background:rgba(245,158,11,.12);color:#b45309;}
+.travel-add-bar{display:flex;gap:6px;flex-wrap:wrap;padding:4px 0 6px;}
+.travel-wrap{display:none;border-top:1px solid var(--border);margin-top:10px;padding-top:10px;}
 </style>
 </head>
 <body>
@@ -992,7 +1010,7 @@ button.tasks-tab-btn {
 
 <header class="app-header">
   <div class="header-row1">
-    <div class="wordmark"><span class="wordmark-dot"></span>BBC Dashboard</div>
+    <div class="wordmark" onclick="goHome()" style="cursor:pointer" title="Go to Today"><span class="wordmark-dot"></span>BBC Dashboard</div>
     <input class="header-search" id="search-input" type="search" placeholder="Search title, correspondent, producer, shoot-edit, location, remarks…" oninput="onSearch(this.value)">
     <div class="header-actions">
       <div class="sync-chip" id="sync-chip" onclick="openSyncModal()">
@@ -1101,7 +1119,7 @@ let state = {
 let ui = {
   view:'today', archiveKey:null,
   filter:'all', search:'',
-  openSections: new Set(['ibu']),
+  openSections: new Set(['ibu','tasks','leaves','upcoming','remarks']),
   openCards: new Set(),
   openForms: new Set(),
   editMap: {},
@@ -2204,7 +2222,7 @@ function storyToText(s){
     let l=s.location||''; if(s.field_location) l=(l?l+' — ':'')+s.field_location;
     ln.push('  Location      : '+l);
   }
-  if(s.live_type) ln.push('  Live Type     : '+(s.live_type==='nonibu'?'Non-IBU Live':'IBU Live'));
+  if(s.live_type) ln.push('  Live Type     : '+(s.live_type==='nonibu'?'Non-IBU':'IBU'));
   if(s.broadcast_times&&s.broadcast_times.length){
     s.broadcast_times.forEach((t,i)=>{
       const plat=t.plat||t.lbl||('Live '+(i+1));
@@ -2225,7 +2243,11 @@ function storyToText(s){
   if(s.detail)        ln.push('  Detail        : '+s.detail);
   if(s.req_name||s.req_team) ln.push('  Requested by  : '+[s.req_name,s.req_team,s.req_location].filter(Boolean).join(', '));
   if(s.created)  ln.push('  Logged at     : '+new Date(s.created).toLocaleString('en-GB'));
-  if(s.remarks)  ln.push('  Remarks       : '+s.remarks);
+  if(s.remarks){
+    const rLines=s.remarks.split('\n');
+    if(rLines.length===1) ln.push('  Remarks       : '+s.remarks);
+    else{ ln.push('  Remarks       :'); rLines.forEach(l=>ln.push('    '+l)); }
+  }
   if(s.remarksList&&s.remarksList.length){
     s.remarksList.forEach((r,i)=>{
       const dt=new Date(r.created).toLocaleDateString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
@@ -2235,6 +2257,19 @@ function storyToText(s){
   if(s.links)    ln.push('  Links         : '+s.links);
   if(s.completion_note)  ln.push('  Done notes    : '+s.completion_note);
   if(s.completion_links) ln.push('  Done links    : '+s.completion_links);
+  if(s.travel&&s.travel.length){
+    ln.push('  Travel:');
+    s.travel.forEach(e=>{
+      const d=e.data||{};
+      const icons={cab:'🚕',flight:'✈️',hotel:'🏨',expense:'💳'};
+      ln.push('    '+(icons[e.type]||'')+' '+e.type.toUpperCase()+(d.forName?' for '+d.forName:''));
+      if(e.type==='cab'&&d.from) ln.push('      '+d.from+(d.to?' → '+d.to:'')+(d.when?' @ '+new Date(d.when).toLocaleString('en-GB'):'')+(d.driver?' Driver: '+d.driver+(d.phone?' '+d.phone:''):'')+(d.cabNum?' Cab: '+d.cabNum:''));
+      if(e.type==='flight') ln.push('      '+(d.direction||'outbound').toUpperCase()+' '+(d.from||'')+(d.to?' → '+d.to:'')+(d.when?' @ '+new Date(d.when).toLocaleString('en-GB'):'')+(d.airline?' '+d.airline:'')+(d.flightNum?' '+d.flightNum:''));
+      if(e.type==='hotel') ln.push('      '+(d.hotelName||'')+(d.where?', '+d.where:'')+(d.checkIn?' In:'+d.checkIn:'')+(d.checkOut?' Out:'+d.checkOut:'')+(d.priceDay?' '+d.priceDay+'/day':'')+(d.payment==='counter'?' (at counter)':''));
+      if(e.type==='expense') ln.push('      '+(d.what||'')+(d.amount?' '+d.amount:'')+(d.paidBy?' by '+d.paidBy:'')+(d.paidUsing?' via '+d.paidUsing:''));
+      if(d.notes) ln.push('      Notes: '+d.notes);
+    });
+  }
   return ln.join('\n');
 }
 function buildFullText(){
@@ -2550,23 +2585,23 @@ function updateBnbActive(){
 }
 
 function initScrollHeader(){
-  let ticking=false;
+  let lastY=0;
+  let scrollTimer=null;
   window.addEventListener('scroll',()=>{
-    if(!ticking){
-      ticking=true;
-      requestAnimationFrame(()=>{
-        const y=window.scrollY||document.documentElement.scrollTop;
-        // Collapse when scrolled past 80px — stay collapsed until slim bar tapped
-        if(y>80 && !_headerCollapsed){
-          collapseHeader();
-        }
-        // Only auto-expand if at very top
-        if(y<=5 && _headerCollapsed){
-          expandHeader();
-        }
-        ticking=false;
-      });
+    const y=window.scrollY||document.documentElement.scrollTop;
+    // Collapse on scroll down past 80px
+    if(y>80 && !_headerCollapsed && y>lastY){
+      collapseHeader();
     }
+    // Only expand when truly back at top — use debounce to avoid flicker
+    if(y===0 && _headerCollapsed){
+      clearTimeout(scrollTimer);
+      scrollTimer=setTimeout(()=>{
+        const cur=window.scrollY||document.documentElement.scrollTop;
+        if(cur===0) expandHeader();
+      }, 120);
+    }
+    lastY=y;
   },{passive:true});
 }
 function collapseHeader(){
@@ -2604,9 +2639,39 @@ function jumpToDate(dateStr){
     setView('archive',dateStr);
   }
 }
+function goHome(){
+  if(ui.openForms&&ui.openForms.size>0){
+    if(!confirm('You have unsaved entries open. Discard and go to Today?')) return;
+    ui.openForms.clear(); ui.editMap={};
+  }
+  ui.search='';
+  const el=document.getElementById('search-input');
+  if(el) el.value='';
+  setView('today',null);
+}
+let _expandedRemarks=new Set();
+function toggleRemarksExpand(id){
+  if(_expandedRemarks.has(id)) _expandedRemarks.delete(id); else _expandedRemarks.add(id);
+  const el=document.getElementById('cr-'+id);
+  if(el) el.classList.toggle('card-remarks-collapsed',!_expandedRemarks.has(id));
+  const btn=document.getElementById('cr-btn-'+id);
+  if(btn) btn.textContent=_expandedRemarks.has(id)?'▲ collapse':'▼ expand';
+}
+function remarksHTML(text,id){
+  if(!text) return '';
+  const LIMIT=160;
+  const needsCollapse=text.length>LIMIT;
+  const collapsed=needsCollapse&&!_expandedRemarks.has(id);
+  return`<div class="card-remarks">💬 <span id="cr-${id}"${collapsed?' class="card-remarks-collapsed"':''}>${esc(text)}</span>${needsCollapse?`<span id="cr-btn-${id}" class="card-remarks-expand" onclick="toggleRemarksExpand('${id}');event.stopPropagation()">${collapsed?'▼ expand':'▲ collapse'}</span>`:''}</div>`;
+}
 function setView(view,archiveKey){
+  // Clear search when navigating away from search
+  if(ui.view==='search'&&view!=='search'){
+    ui.search=''; const se=document.getElementById('search-input'); if(se) se.value='';
+  }
   ui.view=view; ui.archiveKey=archiveKey||null;
-  ui.openSections=new Set(view==='today'?['ibu']:SECTIONS.slice(0,2).map(s=>s.key));
+  // Always keep tasks/leaves/remarks/upcoming open; preserve ibu open state
+  ui.openSections=new Set(['ibu','tasks','leaves','upcoming','remarks']);
   ui.openCards.clear(); ui.openForms.clear(); ui.editMap={}; ui.complForms.clear();
   if(view==='migrate'){ ui.selectedStories.clear(); ui.migrateSourceKey=null; }
   updateDateHeader(); renderDateStrip(); render();
@@ -2821,8 +2886,136 @@ function submitComplForm(sec,id,archKey){
   ui.complForms.delete(id); toast('Marked done ✓'); render();
 }
 function showFieldRow(sec,archKey){
-  // Location detail is now always visible — no toggle needed
+  const sfx='-'+sec+(archKey?'-arch':'');
+  const locEl=document.getElementById('f-location'+sfx);
+  const tw=document.getElementById('travel-wrap'+sfx);
+  if(locEl&&tw) tw.style.display=locEl.value==='Field'?'block':'none';
 }
+
+/* ─── Story Travel CRUD ─── */
+let _storyTravelForms={};  // key: storyId+type → 'new'; storyId+type+'_edit' → entryId
+let _storyTravelOpen={};   // entryId → bool
+function addStoryTravel(sec,sid,type,data,archKey){
+  const arr=getArr(sec,archKey); if(!arr) return;
+  const s=arr.find(x=>x.id===sid); if(!s) return;
+  if(!s.travel) s.travel=[];
+  s.travel.push({id:genId(),type,data:{...data},created:Date.now()});
+  saveAndPush(); render();
+}
+function updateStoryTravel(sec,sid,eid,data,archKey){
+  const arr=getArr(sec,archKey); if(!arr) return;
+  const s=arr.find(x=>x.id===sid); if(!s) return;
+  const i=(s.travel||[]).findIndex(e=>e.id===eid);
+  if(i>=0){s.travel[i]={...s.travel[i],data:{...s.travel[i].data,...data}};saveAndPush();render();}
+}
+function deleteStoryTravel(sec,sid,eid,archKey){
+  const arr=getArr(sec,archKey); if(!arr) return;
+  const s=arr.find(x=>x.id===sid); if(!s) return;
+  s.travel=(s.travel||[]).filter(e=>e.id!==eid);
+  saveAndPush(); render();
+}
+function moveStoryTravel(sec,sid,eid,dir,archKey){
+  const arr=getArr(sec,archKey); if(!arr) return;
+  const s=arr.find(x=>x.id===sid); if(!s||!s.travel) return;
+  const i=s.travel.findIndex(e=>e.id===eid);
+  if(dir==='up'&&i>0)[s.travel[i-1],s.travel[i]]=[s.travel[i],s.travel[i-1]];
+  else if(dir==='down'&&i<s.travel.length-1)[s.travel[i],s.travel[i+1]]=[s.travel[i+1],s.travel[i]];
+  saveAndPush(); render();
+}
+function copyStoryTravelTo(sec,sid,eid,archKey){
+  const arr=getArr(sec,archKey); if(!arr) return;
+  const s=arr.find(x=>x.id===sid); if(!s) return;
+  const e=(s.travel||[]).find(x=>x.id===eid); if(!e) return;
+  const name=prompt('Copy for which person?',''); if(!name||!name.trim()) return;
+  s.travel.push({id:genId(),type:e.type,data:{...e.data,forName:name.trim()},created:Date.now()});
+  saveAndPush(); render();
+}
+function submitStoryTravelForm(sec,sid,type,editId,archKey){
+  const g=id=>(document.getElementById(id)||{}).value||'';
+  let data={};
+  const ak=archKey?`'${archKey}'`:'null';
+  if(type==='cab') data={forName:g('st-cab-for-'+sid),from:g('st-cab-from-'+sid),to:g('st-cab-to-'+sid),when:g('st-cab-when-'+sid),driver:g('st-cab-driver-'+sid),phone:g('st-cab-phone-'+sid),cabNum:g('st-cab-num-'+sid),notes:g('st-cab-notes-'+sid)};
+  else if(type==='flight') data={forName:g('st-flt-for-'+sid),direction:g('st-flt-dir-'+sid),from:g('st-flt-from-'+sid),to:g('st-flt-to-'+sid),when:g('st-flt-when-'+sid),airline:g('st-flt-airline-'+sid),flightNum:g('st-flt-num-'+sid),notes:g('st-flt-notes-'+sid)};
+  else if(type==='hotel') data={forName:g('st-htl-for-'+sid),hotelName:g('st-htl-name-'+sid),where:g('st-htl-where-'+sid),checkIn:g('st-htl-ci-'+sid),checkOut:g('st-htl-co-'+sid),priceDay:g('st-htl-price-'+sid),payment:g('st-htl-pay-'+sid),notes:g('st-htl-notes-'+sid)};
+  else if(type==='expense') data={what:g('st-exp-what-'+sid),when:g('st-exp-when-'+sid),where:g('st-exp-where-'+sid),amount:g('st-exp-amt-'+sid),paidBy:g('st-exp-paidby-'+sid),paidUsing:g('st-exp-method-'+sid),notes:g('st-exp-notes-'+sid)};
+  if(editId) updateStoryTravel(sec,sid,editId,data,archKey);
+  else addStoryTravel(sec,sid,type,data,archKey);
+  delete _storyTravelForms[sid+type];
+  delete _storyTravelForms[sid+type+'_edit'];
+}
+function buildStoryTravelFormHTML(sec,sid,type,editData,archKey){
+  const ak=archKey?`'${archKey}'`:'null';
+  const ed=editData?.data||{};
+  const eid=editData?.id||'';
+  const lbl={cab:'Cab',flight:'Flight',hotel:'Hotel',expense:'Expense'};
+  const ico={cab:'🚕',flight:'✈️',hotel:'🏨',expense:'💳'};
+  const inp=(l,id,v,ph,tp)=>`<div class="fgroup"><label class="flabel">${l}</label><input class="finput" type="${tp||'text'}" id="${id}" value="${esc(v||'')}" placeholder="${ph||''}"></div>`;
+  const sel=(l,id,opts)=>`<div class="fgroup"><label class="flabel">${l}</label><select class="fselect" id="${id}">${opts}</select></div>`;
+  const forInp=(v,pfx)=>`<div class="fgroup"><label class="flabel">For (Employee)</label><input class="finput" list="dl-staff-all" id="${pfx}-${sid}" value="${esc(v||'')}" placeholder="Select or type name" autocomplete="off"></div>`;
+  const ta=(l,id,v)=>`<div class="fgroup full"><label class="flabel">${l}</label><textarea class="ftextarea" id="${id}" style="min-height:40px">${esc(v||'')}</textarea></div>`;
+  let f='';
+  if(type==='cab') f=forInp(ed.forName,'st-cab-for')+inp('From','st-cab-from-'+sid,ed.from,'Pickup')+inp('To','st-cab-to-'+sid,ed.to,'Drop')+inp('When','st-cab-when-'+sid,ed.when,'','datetime-local')+inp('Driver','st-cab-driver-'+sid,ed.driver)+inp('Phone','st-cab-phone-'+sid,ed.phone)+inp('Cab No.','st-cab-num-'+sid,ed.cabNum)+ta('Notes','st-cab-notes-'+sid,ed.notes);
+  else if(type==='flight') f=forInp(ed.forName,'st-flt-for')+sel('Direction','st-flt-dir-'+sid,`<option value="outbound"${ed.direction!=='return'?' selected':''}>Outbound</option><option value="return"${ed.direction==='return'?' selected':''}>Return</option>`)+inp('From','st-flt-from-'+sid,ed.from,'Departure')+inp('To','st-flt-to-'+sid,ed.to,'Arrival')+inp('When','st-flt-when-'+sid,ed.when,'','datetime-local')+inp('Airline','st-flt-airline-'+sid,ed.airline)+inp('Flight No.','st-flt-num-'+sid,ed.flightNum,'e.g. AI202')+ta('Notes','st-flt-notes-'+sid,ed.notes);
+  else if(type==='hotel') f=forInp(ed.forName,'st-htl-for')+inp('Hotel Name','st-htl-name-'+sid,ed.hotelName)+inp('City/Location','st-htl-where-'+sid,ed.where)+inp('Check-in','st-htl-ci-'+sid,ed.checkIn,'','date')+inp('Check-out','st-htl-co-'+sid,ed.checkOut,'','date')+inp('Price/day','st-htl-price-'+sid,ed.priceDay,'₹ or £')+sel('Payment','st-htl-pay-'+sid,`<option value="paid"${ed.payment==='paid'?' selected':''}>Paid</option><option value="counter"${ed.payment==='counter'?' selected':''}>At counter</option>`)+ta('Notes','st-htl-notes-'+sid,ed.notes);
+  else if(type==='expense') f=inp('What','st-exp-what-'+sid,ed.what)+inp('When','st-exp-when-'+sid,ed.when,'','date')+inp('Where','st-exp-where-'+sid,ed.where,'Vendor/location')+inp('Amount','st-exp-amt-'+sid,ed.amount,'₹ or £')+`<div class="fgroup"><label class="flabel">Paid By</label><input class="finput" list="dl-staff-all" id="st-exp-paidby-${sid}" value="${esc(ed.paidBy||'')}" placeholder="Name" autocomplete="off"></div>`+sel('Paid Using','st-exp-method-'+sid,['cash','card','upi','other'].map(v=>`<option value="${v}"${ed.paidUsing===v?' selected':''}>${v[0].toUpperCase()+v.slice(1)}</option>`).join(''))+ta('Notes','st-exp-notes-'+sid,ed.notes);
+  return`<div class="note-add-form" style="border-color:var(--upcoming);margin:8px 0" onclick="event.stopPropagation()">
+    <div style="font-size:12px;font-weight:700;color:var(--upcoming);margin-bottom:10px">${ico[type]} ${eid?'Edit':'Add'} ${lbl[type]}</div>
+    <div class="form-grid">${f}</div>
+    <div style="display:flex;gap:7px;margin-top:8px">
+      <button class="btn btn-accent btn-sm" onclick="submitStoryTravelForm('${sec}','${sid}','${type}','${eid}',${ak});event.stopPropagation()">Save</button>
+      <button class="btn btn-ghost btn-sm" onclick="delete _storyTravelForms['${sid+type}'];delete _storyTravelForms['${sid+type}_edit'];render();event.stopPropagation()">Cancel</button>
+    </div>
+  </div>`;
+}
+function buildStoryTravelHTML(sec,s,archKey){
+  const ak=archKey?`'${archKey}'`:'null';
+  const travel=s.travel||[];
+  const ico={cab:'🚕',flight:'✈️',hotel:'🏨',expense:'💳'};
+  const tcls={cab:'ts-cab',flight:'ts-flight',hotel:'ts-hotel',expense:'ts-expense'};
+  const bcls={cab:'ttb-cab',flight:'ttb-flight',hotel:'ttb-hotel',expense:'ttb-expense'};
+  const tlbl={cab:'Cab',flight:'Flight',hotel:'Hotel',expense:'Expense'};
+  const fld=(l,v)=>v?`<div><div class="cfield-label">${l}</div><div class="cfield-value">${esc(v)}</div></div>`:'';
+  let h=`<div class="travel-wrap" style="display:block" onclick="event.stopPropagation()">
+    <div class="travel-add-bar">
+      <button class="btn btn-ghost btn-sm" onclick="_storyTravelForms['${s.id}cab']='new';render();event.stopPropagation()">🚕 +Cab</button>
+      <button class="btn btn-ghost btn-sm" onclick="_storyTravelForms['${s.id}flight']='new';render();event.stopPropagation()">✈️ +Flight</button>
+      <button class="btn btn-ghost btn-sm" onclick="_storyTravelForms['${s.id}hotel']='new';render();event.stopPropagation()">🏨 +Hotel</button>
+      <button class="btn btn-ghost btn-sm" onclick="_storyTravelForms['${s.id}expense']='new';render();event.stopPropagation()">💳 +Expense</button>
+    </div>`;
+  ['cab','flight','hotel','expense'].forEach(t=>{
+    if(_storyTravelForms[s.id+t]==='new') h+=buildStoryTravelFormHTML(sec,s.id,t,null,archKey);
+  });
+  if(!travel.length) h+=`<div style="font-size:12px;color:var(--text3)">No travel entries yet</div>`;
+  else travel.forEach(e=>{
+    const ek=s.id+e.type+'_edit';
+    if(_storyTravelForms[ek]===e.id){h+=buildStoryTravelFormHTML(sec,s.id,e.type,e,archKey);return;}
+    const d=e.data||{};
+    let sum='',det='';
+    if(e.type==='cab'){sum=(d.forName?esc(d.forName)+' · ':'')+esc(d.from||'')+(d.to?' → '+d.to:'');det=fld('For',d.forName)+fld('From',d.from)+fld('To',d.to)+fld('When',d.when?new Date(d.when).toLocaleString('en-GB'):'')+fld('Driver',d.driver)+fld('Phone',d.phone)+fld('Cab No.',d.cabNum)+fld('Notes',d.notes);}
+    else if(e.type==='flight'){const dir=d.direction==='return'?'↩ Return':'→ Outbound';sum=(d.forName?esc(d.forName)+' · ':'')+dir+(d.from?' · '+d.from:'')+(d.to?' → '+d.to:'')+(d.flightNum?' · '+d.flightNum:'');det=fld('For',d.forName)+fld('Direction',d.direction==='return'?'Return':'Outbound')+fld('From',d.from)+fld('To',d.to)+fld('When',d.when?new Date(d.when).toLocaleString('en-GB'):'')+fld('Airline',d.airline)+fld('Flight No.',d.flightNum)+fld('Notes',d.notes);}
+    else if(e.type==='hotel'){sum=(d.forName?esc(d.forName)+' · ':'')+esc(d.hotelName||'')+(d.where?' · '+d.where:'');det=fld('For',d.forName)+fld('Hotel',d.hotelName)+fld('Location',d.where)+fld('Check-in',d.checkIn)+fld('Check-out',d.checkOut)+fld('Price/day',d.priceDay)+fld('Payment',d.payment==='counter'?'At counter':'Paid')+fld('Notes',d.notes);}
+    else if(e.type==='expense'){sum=esc(d.what||'')+(d.amount?' · '+d.amount:'')+(d.paidBy?' · Paid by '+esc(d.paidBy):'');det=fld('What',d.what)+fld('When',d.when)+fld('Where',d.where)+fld('Amount',d.amount)+fld('Paid by',d.paidBy)+fld('Method',d.paidUsing)+fld('Notes',d.notes);}
+    const isOpen=_storyTravelOpen[e.id];
+    h+=`<div class="travel-segment ${tcls[e.type]}">
+      <div class="travel-seg-head" onclick="_storyTravelOpen['${e.id}']=!_storyTravelOpen['${e.id}'];render();event.stopPropagation()">
+        <span class="travel-type-badge ${bcls[e.type]}">${ico[e.type]} ${tlbl[e.type]}</span>
+        <span style="font-size:12px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px">${sum||'(no details)'}</span>
+        <div style="display:flex;gap:3px;flex-shrink:0" onclick="event.stopPropagation()">
+          <button class="btn btn-ghost btn-xs" onclick="moveStoryTravel('${sec}','${s.id}','${e.id}','up',${ak});event.stopPropagation()" title="Move up">↑</button>
+          <button class="btn btn-ghost btn-xs" onclick="moveStoryTravel('${sec}','${s.id}','${e.id}','down',${ak});event.stopPropagation()" title="Move down">↓</button>
+          <button class="btn btn-ghost btn-xs" onclick="copyStoryTravelTo('${sec}','${s.id}','${e.id}',${ak});event.stopPropagation()" title="Copy for another person">⎘</button>
+          <button class="btn btn-ghost btn-xs" onclick="_storyTravelForms['${s.id+e.type}_edit']='${e.id}';render();event.stopPropagation()">✏</button>
+          <button class="btn btn-ghost btn-xs btn-danger" onclick="deleteStoryTravel('${sec}','${s.id}','${e.id}',${ak});event.stopPropagation()">🗑</button>
+        </div>
+        <span style="font-size:11px;color:var(--text3);margin-left:4px">${isOpen?'▾':'▸'}</span>
+      </div>
+      ${isOpen?`<div class="card-fields" style="margin-top:6px">${det}</div>`:''}
+    </div>`;
+  });
+  h+=`</div>`;
+  return h;
+}
+
 function onUKChange(sec,archKey){
   const sfx='-'+sec+(archKey?'-arch':'');
   const c=ukToIST((document.getElementById('f-time-uk'+sfx)||{}).value||'');
@@ -2968,8 +3161,7 @@ function render(){
 }
 
 function injectDataLists(){
-  // Remove old ones first
-  ['dl-correspondents','dl-producers','dl-shoot'].forEach(id=>document.getElementById(id)?.remove());
+  ['dl-correspondents','dl-producers','dl-shoot','dl-staff-all'].forEach(id=>document.getElementById(id)?.remove());
   const sn=state.staffNames||{};
   const makeList=(id,arr)=>{
     const dl=document.createElement('datalist'); dl.id=id;
@@ -2979,6 +3171,8 @@ function injectDataLists(){
   makeList('dl-correspondents', sn.correspondents||[]);
   makeList('dl-producers',      sn.producers||[]);
   makeList('dl-shoot',          sn.shootEdit||[]);
+  const allStaff=[...new Set([...(sn.correspondents||[]),...(sn.producers||[]),...(sn.shootEdit||[])])].sort();
+  makeList('dl-staff-all', allStaff);
 }
 
 /* ── Tab Date Navigator — shown inside Notes / Tasks standalone views ── */
@@ -3955,11 +4149,23 @@ function renderTasksSection(){
   const cur=isStandalone?(ui.tasksDate||today):today;
   const isToday=cur===today;
 
+  const isOpen=ui.openSections.has('tasks');
+  const allTasks=state.tasks||[];
+  const pendingCount=allTasks.filter(t=>t.taskStatus!=='done'&&t.taskStatus!=='transferred').length;
+  const doneCount=allTasks.filter(t=>t.taskStatus==='done').length;
+  const accHeader=`<div class="accordion${isOpen?' acc-open':''}" id="acc-tasks">
+    <div class="acc-header" onclick="toggleAccordion('tasks')">
+      <span class="acc-icon">☑</span><span class="acc-name">Tasks</span>
+      <div class="acc-meta">
+        ${pendingCount?`<span class="sbadge sb-in-progress">${pendingCount} pending</span>`:''}
+        ${doneCount?`<span class="sbadge sb-done">${doneCount} done</span>`:''}
+      </div>
+      <span class="acc-chevron${isOpen?' open':''}" id="acc-chev-tasks">▾</span>
+    </div>
+    <div class="acc-body${isOpen?' open':''}" id="acc-body-tasks">`;
+
   let html=`<div id="tasks-section" style="scroll-margin-top:180px">`;
-
-  // Date navigator only when shown as standalone tab
   if(isStandalone) html+=renderTabDateNav('tasksDate','Tasks');
-
   if(!isToday){
     // Show archived tasks for this date
     const archTasks=(state.archive[cur]?.tasks)||[];
@@ -3986,19 +4192,12 @@ function renderTasksSection(){
       });
     }
     html+=`</div>`;
-    return html;
+    return accHeader+html+'</div></div></div>';
   }
 
   const tasks=state.tasks;
-  const pendingCount=tasks.filter(t=>t.taskStatus!=='done').length;
-  const doneCount=tasks.filter(t=>t.taskStatus==='done').length;
 
-  html+=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-    <div style="display:flex;align-items:center;gap:10px">
-      <span style="font-family:var(--serif);font-size:17px;font-weight:700;color:var(--text)">☑ Tasks</span>
-      ${pendingCount?`<span style="font-size:11px;font-family:var(--mono);color:var(--text3);background:var(--surface);border:1px solid var(--border);padding:2px 8px;border-radius:4px">${pendingCount} pending</span>`:''}
-      ${doneCount?`<span style="font-size:11px;font-family:var(--mono);color:var(--done);background:var(--done-bg);border:1px solid rgba(22,163,74,.2);padding:2px 8px;border-radius:4px">✓ ${doneCount} done</span>`:''}
-    </div>
+  html+=`<div style="display:flex;justify-content:flex-end;margin-bottom:10px">
     <button class="btn btn-accent btn-sm" onclick="ui_taskForm=!ui_taskForm;ui_editTaskId=null;render();setTimeout(()=>document.getElementById('tf-title')?.focus(),60)">+ Add Task</button>
   </div>`;
 
@@ -4063,7 +4262,7 @@ function renderTasksSection(){
   }
 
   html+=`</div>`;
-  return html;
+  return accHeader+html+'</div></div>';
 }
 
 function renderTaskCard(t, today){
@@ -4117,6 +4316,7 @@ function renderTaskCard(t, today){
     <div class="task-right">
       <span class="${sbCls}">${sbTxt}</span>
     </div>
+    <button class="btn btn-ghost btn-xs btn-danger" style="flex-shrink:0;padding:3px 7px;margin-right:4px" onclick="event.stopPropagation();if(confirm('Delete this task?'))deleteTask('${t.id}')" title="Delete">🗑</button>
     <span class="chevron${isOpen?' open':''}" id="task-chev-${t.id}" style="margin-top:1px">▾</span>
   </div>
   <div class="task-body${isOpen?' open':''}" id="task-body-${t.id}">
@@ -4139,7 +4339,7 @@ function renderTaskCard(t, today){
         : ''
       }
       <button class="btn btn-ghost btn-sm" onclick="editTask('${t.id}');event.stopPropagation()">✏ Edit</button>
-      <button class="btn btn-ghost btn-sm btn-danger" onclick="if(confirm('Delete this task?'))deleteTask('${t.id}');event.stopPropagation()">🗑</button>
+      <button class="btn btn-ghost btn-sm btn-danger" onclick="event.stopPropagation();if(confirm('Delete this task?'))deleteTask('${t.id}')">🗑</button>
     </div>
   </div>
 </div>`;
@@ -4195,12 +4395,6 @@ function renderCombinedAccordion(archKey){
         <button class="btn btn-ghost btn-sm" onclick="doEmailSection('other',${archKeyJS});event.stopPropagation()">✉ Other</button>
         <button class="btn btn-accent btn-sm" onclick="toggleForm('ibu',${archKeyJS});event.stopPropagation()">+ Live Story</button>
         <button class="btn btn-ghost btn-sm" style="border-color:rgba(13,148,136,.4);color:var(--working)" onclick="toggleForm('other',${archKeyJS});event.stopPropagation()">+ Other Story</button>
-      </div>
-      <div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin:0 0 10px;padding:6px 10px;background:var(--surface2);border-radius:6px;border:1px solid var(--border);line-height:1.6">
-        <span class="subsec-badge ssb-ibu">IBU Live</span> auto-archives each day &nbsp;·&nbsp;
-        <span class="subsec-badge ssb-other">Non-IBU / Other</span> carries forward unless done/shelved &nbsp;·&nbsp;
-        Click the badge on a card to switch it &nbsp;·&nbsp;
-        Use <strong>⇄ Migrate</strong> to send a live to a future date
       </div>
       ${isIBUFormOpen?renderForm('ibu',archKey):''}
       ${isOtherFormOpen?renderForm('other',archKey):''}
@@ -4612,16 +4806,20 @@ function renderLeavesSection(){
   const activeLeaves=(state.leaves).filter(l=>l.dateTo>=today);
   const pastLeaves=(state.leaves).filter(l=>l.dateTo<today);
 
-  let html=`<div id="leaves-section" style="scroll-margin-top:180px;margin-top:4px">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-    <div style="display:flex;align-items:center;gap:10px">
-      <span style="font-family:var(--serif);font-size:17px;font-weight:700;color:var(--text)">🌴 Leaves</span>
-      ${activeLeaves.length?`<span style="font-size:11px;font-family:var(--mono);color:#0EA5E9;background:rgba(14,165,233,.08);border:1px solid rgba(14,165,233,.2);padding:2px 8px;border-radius:4px">${activeLeaves.length} active / upcoming</span>`:''}
+  const isOpenL=ui.openSections.has('leaves');
+  const accHeaderL=`<div class="accordion${isOpenL?' acc-open':''}" id="acc-leaves">
+    <div class="acc-header" onclick="toggleAccordion('leaves')">
+      <span class="acc-icon">🌴</span><span class="acc-name">Leaves</span>
+      <div class="acc-meta">
+        ${activeLeaves.length?`<span class="sbadge sb-in-progress">${activeLeaves.length} active/upcoming</span>`:''}
+      </div>
+      <span class="acc-chevron${isOpenL?' open':''}" id="acc-chev-leaves">▾</span>
     </div>
-    <div style="display:flex;gap:7px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" onclick="ui_showLeaveSettings=!ui_showLeaveSettings;render()">⚙ Employees</button>
-      <button class="btn btn-accent btn-sm" onclick="ui_leaveForm=!ui_leaveForm;ui_editLeaveId=null;render();setTimeout(()=>document.getElementById('lf-employee')?.focus(),60)">+ Add Leave</button>
-    </div>
+    <div class="acc-body${isOpenL?' open':''}" id="acc-body-leaves">`;
+  let html=`<div id="leaves-section" style="scroll-margin-top:180px">
+  <div style="display:flex;justify-content:flex-end;gap:7px;margin-bottom:10px;flex-wrap:wrap">
+    <button class="btn btn-ghost btn-sm" onclick="ui_showLeaveSettings=!ui_showLeaveSettings;render()">⚙ Employees</button>
+    <button class="btn btn-accent btn-sm" onclick="ui_leaveForm=!ui_leaveForm;ui_editLeaveId=null;render();setTimeout(()=>document.getElementById('lf-employee')?.focus(),60)">+ Add Leave</button>
   </div>`;
 
   // Employee settings
@@ -4692,7 +4890,7 @@ function renderLeavesSection(){
     }
   }
   html+=`</div>`;
-  return html;
+  return accHeaderL+html+'</div></div>';
 }
 
 function renderLeaveCard(l,today,isPast){
@@ -4823,6 +5021,7 @@ function renderUpcomingRow(sec,s,archKey){
       ${s.deadline_date?`<span class="uc-chip">⏱ ${esc(s.deadline_date)}</span>`:''}
       ${sbL?`<span class="sbadge ${sbC}">${sbL}</span>`:''}
     </div>
+    <button class="btn btn-ghost btn-xs btn-danger" style="flex-shrink:0;padding:3px 7px" onclick="event.stopPropagation();confirmDelete('${sec}','${s.id}',${archKeyJS})" title="Delete">🗑</button>
     <span class="chevron${isOpen?' open':''}" id="ch-${s.id}" style="display:none"></span>
   </div>
   <div class="uc-body${isOpen?' open':''}" id="cb-${s.id}">
@@ -4833,7 +5032,7 @@ function renderUpcomingRow(sec,s,archKey){
       ${s.deadline_date?field('Deadline',s.deadline_date+(s.deadline_uk?' · '+s.deadline_uk+' '+ukLabel():'')+(s.deadline_ist?' / '+s.deadline_ist+' IST':'')):''}
       ${s.reminder&&s.reminder!=='off'?field('Reminder','⏰ '+s.reminder):''}
     </div>
-    ${s.remarks?`<div class="card-remarks">💬 ${esc(s.remarks)}</div>`:''}
+    ${remarksHTML(s.remarks, s.id+'_cr')}
     ${linksHtml}
     ${s.completion_note||s.completion_links?`<div class="completion-box"><div class="completion-label">✅ Completion Notes</div>${s.completion_note?`<div class="completion-note">${esc(s.completion_note)}</div>`:''} ${clHtml}</div>`:''}
     <div id="compl-form-${s.id}" style="display:${isComplOpen?'block':'none'}">
@@ -4873,7 +5072,7 @@ function renderStoryCard(sec,s,archKey){
   const wwLabel=mode==='working'?'▶ Working':mode==='watching'?'👁 Watching':'● Set mode';
   const subsecBadge=(sec==='ibu'||sec==='other')
     ? `<span class="subsec-badge ${sec==='ibu'?'ssb-ibu':'ssb-other'}" onclick="toggleStorySubsection('${sec}','${s.id}',${archKey?`'${archKey}'`:'null'});event.stopPropagation()" title="Click to switch" style="cursor:pointer">${
-        sec==='ibu'?(s.live_type==='nonibu'?'Non-IBU Live':'IBU Live'):'Other Story'
+        sec==='ibu'?(s.live_type==='nonibu'?'Non-IBU':'IBU'):'Other Story'
       } ⇄</span>`
     : '';
   const isIBU=sec==='ibu'&&!archKey;
@@ -4905,6 +5104,7 @@ function renderStoryCard(sec,s,archKey){
       ${sbL?`<span class="sbadge ${sbC}">${sbL}</span>`:''}
       ${deadlineBadge(s)}
     </div>
+    <button class="btn btn-ghost btn-xs btn-danger" style="flex-shrink:0;padding:3px 7px" onclick="event.stopPropagation();confirmDelete('${sec}','${s.id}',${archKeyJS})" title="Delete">🗑</button>
     <span class="chevron${isOpen?' open':''}" id="ch-${s.id}">▾</span>
   </div>
   <div class="card-body${isOpen?' open':''}" id="cb-${s.id}">
@@ -4927,8 +5127,9 @@ function renderStoryCard(sec,s,archKey){
       ${reqTime?field('Logged At',reqTime):''}
       ${s.reminder&&s.reminder!=='off'?field('Reminder','⏰ '+s.reminder):''}
     </div>
-    ${s.remarks?`<div class="card-remarks">💬 ${esc(s.remarks)}</div>`:''}
+    ${remarksHTML(s.remarks, s.id+'_cr')}
     ${(sec==='ibu'||sec==='other')?buildStoryRemarksHTML(sec,s,archKey):''}
+    ${s.location==='Field'?buildStoryTravelHTML(sec,s,archKey):''}
     ${linksHtml}
     ${s.completion_note||s.completion_links?`<div class="completion-box"><div class="completion-label">✅ Completion Notes</div>${s.completion_note?`<div class="completion-note">${esc(s.completion_note)}</div>`:''} ${clHtml}</div>`:''}
     <div id="compl-form-${s.id}" style="display:${isComplOpen?'block':'none'}">
@@ -4994,10 +5195,10 @@ function renderForm(sec,archKey){
       <label class="flabel">Live Type</label>
       <div style="display:flex;gap:8px;margin-top:4px">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;padding:7px 14px;border:1px solid var(--border);border-radius:7px;background:var(--surface2)">
-          <input type="radio" name="live-type${sfx}" id="f-live-ibu${sfx}" value="ibu" checked style="accent-color:var(--accent)"> <span>IBU Live</span>
+          <input type="radio" name="live-type${sfx}" id="f-live-ibu${sfx}" value="ibu" checked style="accent-color:var(--accent)"> <span>IBU</span>
         </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;padding:7px 14px;border:1px solid var(--border);border-radius:7px;background:var(--surface2)">
-          <input type="radio" name="live-type${sfx}" id="f-live-nonibu${sfx}" value="nonibu" style="accent-color:var(--working)"> <span>Non-IBU Live</span>
+          <input type="radio" name="live-type${sfx}" id="f-live-nonibu${sfx}" value="nonibu" style="accent-color:var(--working)"> <span>Non-IBU</span>
         </label>
       </div>
     </div>`:''}
@@ -5022,13 +5223,17 @@ function renderForm(sec,archKey){
     </div>
     <div class="form-divider">Location</div>
     <div class="fgroup"><label class="flabel">Location Type</label>
-      <select class="fselect" id="f-location${sfx}">
+      <select class="fselect" id="f-location${sfx}" onchange="showFieldRow('${sec}',${archKeyJS})">
         <option value="">– Select –</option><option value="Studio">Studio</option><option value="Field">Field</option><option value="Remote">Remote</option>
       </select>
     </div>
     <div class="fgroup">
-      <label class="flabel">Location Detail <span class="flabel-hint">Studio name, city, venue…</span></label>
-      <input class="finput" id="f-field-location${sfx}" placeholder="e.g. Studio A, New Delhi, Connaught Place">
+      <label class="flabel">Location Detail</label>
+      <input class="finput" id="f-field-location${sfx}" placeholder="">
+    </div>
+    <div id="travel-wrap${sfx}" class="fgroup full" style="display:${editStoryObj?.location==='Field'?'block':'none'}">
+      <div class="form-divider" style="margin-top:0">🗺 Travel Details</div>
+      ${editStoryObj?buildStoryTravelHTML(sec,editStoryObj,archKey):`<div style="font-size:12px;color:var(--text3);padding:4px 0">Save the story first, then reopen to add travel details.</div>`}
     </div>
     <div class="form-divider">Broadcast Times</div>
     <div class="fgroup full" style="margin-bottom:4px">
@@ -5064,7 +5269,7 @@ function renderForm(sec,archKey){
         <option value="off">Off</option><option value="15min">15 min</option><option value="30min">30 min</option><option value="1hr">1 hour</option><option value="4hr">4 hours</option><option value="1day">1 day</option><option value="1week">1 week</option>
       </select>
     </div>
-    <div class="fgroup full"><label class="flabel">Remarks</label><textarea class="ftextarea" id="f-remarks${sfx}" placeholder="Notes, context…"></textarea></div>
+    <div class="fgroup full"><label class="flabel">Remarks</label><textarea class="ftextarea" id="f-remarks${sfx}" placeholder="Notes, context…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.stopPropagation();}" style="white-space:pre-wrap"></textarea></div>
     <div class="fgroup full"><label class="flabel">Reference Links (comma-separated)</label><input class="finput" id="f-links${sfx}" placeholder="https://…"></div>
   </div>
   <div class="form-footer">
@@ -5114,7 +5319,7 @@ function renderUpcomingForm(sec,archKey,isEdit,sfx,archKeyJS){
         <option value="off">Off</option><option value="15min">15 min</option><option value="30min">30 min</option><option value="1hr">1 hour</option><option value="4hr">4 hours</option><option value="1day">1 day</option><option value="1week">1 week</option>
       </select>
     </div>
-    <div class="fgroup full"><label class="flabel">Remarks &amp; Any Relevant Detail</label><textarea class="ftextarea" id="f-remarks${sfx}" placeholder="Context, previous coverage, contacts, logistics…"></textarea></div>
+    <div class="fgroup full"><label class="flabel">Remarks &amp; Any Relevant Detail</label><textarea class="ftextarea" id="f-remarks${sfx}" placeholder="Context, previous coverage, contacts, logistics…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.stopPropagation();}" style="white-space:pre-wrap"></textarea></div>
     <div class="fgroup full"><label class="flabel">Reference Links (comma-separated)</label><input class="finput" id="f-links${sfx}" placeholder="https://…"></div>
   </div>
   <div class="form-footer">
