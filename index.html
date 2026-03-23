@@ -1002,6 +1002,31 @@ button.tasks-tab-btn {
 .ttb-expense{background:rgba(245,158,11,.12);color:#b45309;}
 .travel-add-bar{display:flex;gap:6px;flex-wrap:wrap;padding:4px 0 6px;}
 .travel-wrap{display:none;border-top:1px solid var(--border);margin-top:10px;padding-top:10px;}
+/* ── Meetings ── */
+.meeting-card { background:var(--surface); border:1px solid var(--border); border-left:3px solid #6366f1; border-radius:10px; margin-bottom:8px; overflow:hidden; }
+.meeting-card.mc-done { border-left-color:var(--done); opacity:.8; }
+.meeting-card.mc-cancelled { border-left-color:#94a3b8; opacity:.6; }
+.meeting-top { display:flex; align-items:center; gap:10px; padding:11px 14px; cursor:pointer; }
+.meeting-time-block { display:flex; flex-direction:column; align-items:center; background:rgba(99,102,241,.08); border-radius:7px; padding:5px 10px; flex-shrink:0; min-width:52px; }
+.meeting-time-hr { font-size:15px; font-weight:700; color:#6366f1; font-family:var(--mono); line-height:1; }
+.meeting-time-date { font-size:9px; color:var(--text3); font-family:var(--mono); margin-top:2px; }
+.meeting-title-wrap { flex:1; min-width:0; }
+.meeting-name { font-size:13.5px; font-weight:600; color:var(--text); }
+.meeting-meta { font-size:11px; color:var(--text3); font-family:var(--mono); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.meeting-status-badge { font-size:10px; font-weight:600; font-family:var(--mono); padding:2px 8px; border-radius:10px; flex-shrink:0; }
+.msb-scheduled { background:rgba(99,102,241,.1); color:#6366f1; }
+.msb-done { background:var(--done-bg); color:var(--done); }
+.msb-cancelled { background:rgba(148,163,184,.1); color:#64748b; }
+.meeting-body { display:none; padding:0 14px 14px; border-top:1px solid var(--border); }
+.meeting-body.open { display:block; }
+.meeting-participants { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+.participant-chip { font-size:11px; padding:2px 8px; border-radius:10px; background:var(--surface2); border:1px solid var(--border); color:var(--text2); display:flex; align-items:center; gap:4px; }
+.participant-chip.ext { border-color:rgba(99,102,241,.3); background:rgba(99,102,241,.05); }
+.meeting-remarks-list { margin-top:8px; }
+.mremark { padding:7px 10px; background:var(--surface2); border-radius:7px; margin-bottom:5px; border-left:2px solid var(--border2); }
+.mremark-text { font-size:12.5px; color:var(--text2); line-height:1.55; white-space:pre-wrap; }
+.mremark-meta { font-size:10px; color:var(--text3); font-family:var(--mono); margin-top:3px; }
+.meeting-form { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:10px; }
 </style>
 </head>
 <body>
@@ -1102,6 +1127,7 @@ let state = {
   carryForwardDismissed:null,
   sectionNames:{ ibu:'India Business Update (IBU)', other:'Other Lives/Stories' },
   tasks:[],
+  meetings:[],
   leaves:[],
   notes:[],   // structured notes array [{id,text,created,deadline_date,status}]
   employees:['Employee 1','Employee 2','Employee 3','Employee 4','Employee 5'],
@@ -1119,7 +1145,7 @@ let state = {
 let ui = {
   view:'today', archiveKey:null,
   filter:'all', search:'',
-  openSections: new Set(['ibu','tasks','leaves','upcoming','remarks']),
+  openSections: new Set([]),
   openCards: new Set(),
   openForms: new Set(),
   editMap: {},
@@ -1240,6 +1266,7 @@ function loadLocal(){
   if(!state.remarks)  state.remarks='';
   if(!state.archive)  state.archive={};
   if(!state.tasks) state.tasks=[];
+  if(!state.meetings) state.meetings=[];
   if(!state.leaves) state.leaves=[];
   if(!state.notes) state.notes=[];
   if(!state.staffNames) state.staffNames={correspondents:['Archana Shukla','Arunoday Mukharji'],producers:['Neyaz Farooquee'],shootEdit:['Pritam Roy','Vishnu Vardhan']};
@@ -1279,7 +1306,7 @@ function startRealtimeSync(){
       const incoming=snap.data();
       // Smart merge: for arrays (leaves, tasks, notes), keep whichever is longer/newer
       // This prevents a device with stale data from wiping entries added on another device
-      const arrayKeys=['leaves','tasks','notes'];
+      const arrayKeys=['leaves','tasks','notes','meetings'];
       const mergedArrays={};
       arrayKeys.forEach(k=>{
         const local=state[k]||[];
@@ -1737,15 +1764,28 @@ function captureFormState(){
 }
 function restoreFormState(saved){
   if(!saved) return;
+
+  // Build set of field IDs that belong to edit-mode forms — these already have correct
+  // values inlined from editStoryObj, so we must NOT overwrite them.
+  const editFieldPrefixes=new Set();
+  Object.entries(ui.editMap||{}).forEach(([k])=>{
+    const sec=k.split('::')[0];
+    const archKey=k.includes('::')?k.split('::')[1]:null;
+    editFieldPrefixes.add('-'+sec+(archKey?'-arch':''));
+  });
+
   Object.entries(saved).forEach(([id,val])=>{
     if(id==='__broadcastSlots') return;
     if(id.startsWith('__radio_')){
-      // Restore radio buttons
       const name=id.replace('__radio_','');
       const el=document.querySelector(`input[name="${name}"][value="${val}"]`);
       if(el) el.checked=true;
       return;
     }
+    if(!val) return;
+    // Skip fields that belong to an edit-mode form — they are already correct
+    const belongsToEdit=[...editFieldPrefixes].some(pfx=>id.endsWith(pfx));
+    if(belongsToEdit) return;
     const el=document.getElementById(id);
     if(el&&el.tagName!=='BUTTON') el.value=val;
   });
@@ -2376,6 +2416,7 @@ function doExportJSON(){
     remarks:     state.remarks,
     archive:     state.archive,
     tasks:       state.tasks||[],
+    meetings:    state.meetings||[],
     notes:       state.notes||[],
     leaves:      state.leaves||[],
     employees:   state.employees||[],
@@ -2437,6 +2478,7 @@ function handleImportFile(input){
       state.remarks     = data.remarks     || '';
       state.archive     = data.archive     || {};
       state.tasks       = data.tasks       || [];
+      state.meetings    = data.meetings    || [];
       state.notes       = data.notes       || [];
       state.leaves      = data.leaves      || [];
       state.employees   = data.employees   || state.employees;
@@ -2555,10 +2597,11 @@ function openMobileMore(){
 }
 
 function bnbNav(tab){
-  if(tab==='today'){
-    setView('today',null);
-  } else if(tab==='tasks'){
+  if(tab==='tasks'){
     ui.view='tasks'; render(); window.scrollTo({top:0});
+  } else if(tab==='meetings'){
+    ui.openSections.add('meetings');
+    ui.view='meetings'; render(); window.scrollTo({top:0});
   } else if(tab==='leaves'){
     ui.view='leaves'; render(); window.scrollTo({top:0});
   } else if(tab==='upcoming'){
@@ -2571,12 +2614,12 @@ function bnbNav(tab){
   updateBnbActive();
 }
 function updateBnbActive(){
-  ['today','tasks','leaves','upcoming','notes'].forEach(t=>{
+  ['tasks','meetings','leaves','upcoming','notes'].forEach(t=>{
     const el=document.getElementById('bnb-'+t);
     if(!el) return;
     const active=
-      (t==='today'    && (ui.view==='today'||ui.view==='archive'))  ||
       (t==='tasks'    && ui.view==='tasks')    ||
+      (t==='meetings' && ui.view==='meetings') ||
       (t==='leaves'   && ui.view==='leaves')   ||
       (t==='upcoming' && ui.view==='upcoming') ||
       (t==='notes'    && ui.view==='notes');
@@ -2657,12 +2700,41 @@ function toggleRemarksExpand(id){
   const btn=document.getElementById('cr-btn-'+id);
   if(btn) btn.textContent=_expandedRemarks.has(id)?'▲ collapse':'▼ expand';
 }
-function remarksHTML(text,id){
+function saveMainRemark(sec, storyId, archKey){
+  const el=document.getElementById('mr-edit-'+storyId); if(!el) return;
+  const text=el.value; // keep as-is (allow blank to clear)
+  updateStory(sec, storyId, {remarks: text.trim()}, archKey);
+  _editingMainRemark.delete(storyId);
+}
+function remarksHTML(text, id, sec, storyId, archKey){
+  // sec/storyId/archKey optional — if provided, enable inline CRUD
+  const hasCRUD=!!(sec&&storyId);
+  const archKeyJS=archKey?`'${archKey}'`:'null';
+  const isEditing=hasCRUD&&_editingMainRemark.has(storyId);
+  if(isEditing){
+    return`<div class="card-remarks" onclick="event.stopPropagation()">
+      <textarea class="ftextarea" id="mr-edit-${storyId}" style="min-height:60px;white-space:pre-wrap;margin-bottom:6px" onkeydown="if(event.key==='Enter'){event.stopPropagation();}">${esc(text||'')}</textarea>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-accent btn-sm" onclick="event.stopPropagation();saveMainRemark('${sec}','${storyId}',${archKeyJS})">Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();_editingMainRemark.delete('${storyId}');render()">Cancel</button>
+      </div>
+    </div>`;
+  }
+  if(!text&&hasCRUD){
+    return`<div class="card-remarks" onclick="event.stopPropagation()">
+      <button class="btn btn-ghost btn-xs" style="font-style:normal;color:var(--text3)" onclick="event.stopPropagation();_editingMainRemark.add('${storyId}');render()">+ Add remarks</button>
+    </div>`;
+  }
   if(!text) return '';
   const LIMIT=160;
   const needsCollapse=text.length>LIMIT;
   const collapsed=needsCollapse&&!_expandedRemarks.has(id);
-  return`<div class="card-remarks">💬 <span id="cr-${id}"${collapsed?' class="card-remarks-collapsed"':''}>${esc(text)}</span>${needsCollapse?`<span id="cr-btn-${id}" class="card-remarks-expand" onclick="toggleRemarksExpand('${id}');event.stopPropagation()">${collapsed?'▼ expand':'▲ collapse'}</span>`:''}</div>`;
+  return`<div class="card-remarks" onclick="event.stopPropagation()">💬 <span id="cr-${id}"${collapsed?' class="card-remarks-collapsed"':''}>${esc(text)}</span>${needsCollapse?`<span id="cr-btn-${id}" class="card-remarks-expand" onclick="event.stopPropagation();toggleRemarksExpand('${id}')">${collapsed?'▼ expand':'▲ collapse'}</span>`:''
+  }${hasCRUD?`<span style="margin-left:8px">
+    <button class="btn btn-ghost btn-xs" style="font-style:normal" onclick="event.stopPropagation();_editingMainRemark.add('${storyId}');render()" title="Edit remarks">✏</button>
+    <button class="btn btn-ghost btn-xs btn-danger" style="font-style:normal" onclick="event.stopPropagation();if(confirm('Clear remarks?'))updateStory('${sec}','${storyId}',{remarks:''},${archKeyJS})" title="Clear remarks">🗑</button>
+  </span>`:''}
+  </div>`;
 }
 function setView(view,archiveKey){
   // Clear search when navigating away from search
@@ -2671,7 +2743,7 @@ function setView(view,archiveKey){
   }
   ui.view=view; ui.archiveKey=archiveKey||null;
   // Always keep tasks/leaves/remarks/upcoming open; preserve ibu open state
-  ui.openSections=new Set(['ibu','tasks','leaves','upcoming','remarks']);
+  ui.openSections=new Set([]);
   ui.openCards.clear(); ui.openForms.clear(); ui.editMap={}; ui.complForms.clear();
   if(view==='migrate'){ ui.selectedStories.clear(); ui.migrateSourceKey=null; }
   updateDateHeader(); renderDateStrip(); render();
@@ -2719,9 +2791,12 @@ function updateDateHeader(){
     ctEl.textContent='Future stories & events';
   } else if(ui.view==='notes'){
     wdEl.textContent=now.toLocaleDateString('en-GB',{weekday:'long'}).toUpperCase();
-    hdEl.textContent='Note';
-    hdEl.className='date-full sz-normal';
+    hdEl.textContent='Note'; hdEl.className='date-full sz-normal';
     ctEl.textContent='Carry-forward notes';
+  } else if(ui.view==='meetings'){
+    wdEl.textContent=now.toLocaleDateString('en-GB',{weekday:'long'}).toUpperCase();
+    hdEl.textContent='Meetings'; hdEl.className='date-full sz-normal';
+    ctEl.textContent='Editorial & production meetings';
   }
 }
 function toggleAccordion(key){
@@ -2786,25 +2861,13 @@ function editStory(sec,id,archKey){
   ui.openForms.add(k); ui.editMap[k]=id;
   if(!ui.openSections.has(sec)) ui.openSections.add(sec);
   render();
-  const arr=getArr(sec,archKey); const s=arr?.find(s=>s.id===id);
-  const sfx='-'+sec+(archKey?'-arch':'');
-  if(s){
-    const isUpcoming=SECTIONS.find(ss=>ss.key===sec)?.isUpcoming;
-    if(isUpcoming){
-      ['title','detail','expected_type','expected_date','correspondent','status','remarks','links','reminder','deadline_date','deadline_uk','deadline_ist']
-      .forEach(f=>{ const el=document.getElementById('f-'+f.replace(/_/g,'-')+sfx); if(el) el.value=s[f]||''; });
-    } else {
-      ['title','correspondent','producer','shoot_edit','location','field_location','req_name','req_team','req_location','status','remarks','links','reminder','deadline_date','deadline_uk','deadline_ist']
-      .forEach(f=>{ const el=document.getElementById('f-'+f.replace(/_/g,'-')+sfx); if(el) el.value=s[f]||''; });
-      // Restore live_type radio
-      if(sec==='ibu'&&s.live_type){
-        const radioEl=document.querySelector(`input[name="live-type${sfx}"][value="${s.live_type}"]`);
-        if(radioEl) radioEl.checked=true;
-      }
-      showFieldRow(sec,archKey);
-    }
-  }
-  setTimeout(()=>document.getElementById('story-form-'+sec+(archKey?'-arch':''))?.scrollIntoView({behavior:'smooth',block:'start'}),60);
+  // Values are now inlined in the form HTML via editStoryObj — no setTimeout needed.
+  // Just scroll to the form and restore location field visibility.
+  setTimeout(()=>{
+    const sfx='-'+sec+(archKey?'-arch':'');
+    showFieldRow(sec,archKey);
+    document.getElementById('story-form-'+sec+(archKey?'-arch':''))?.scrollIntoView({behavior:'smooth',block:'start'});
+  }, 0);
 }
 function submitForm(sec,archKey){
   const sfx='-'+sec+(archKey?'-arch':'');
@@ -3147,8 +3210,9 @@ function render(){
   else if(ui.view==='archive') html+=renderArchiveHTML(ui.archiveKey);
   else if(ui.view==='migrate') html+=renderMigrateHTML();
   else if(ui.view==='search')  html+=renderSearchHTML();
-  else if(ui.view==='tasks')   html+=renderTasksSection();
-  else if(ui.view==='leaves')  html+=renderLeavesSection();
+  else if(ui.view==='tasks')    html+=renderTasksSection();
+  else if(ui.view==='meetings') html+=renderMeetingsSection();
+  else if(ui.view==='leaves')   html+=renderLeavesSection();
   else if(ui.view==='upcoming') html+=renderUpcomingView();
   else if(ui.view==='notes')   html+=renderNotesView();
   html+='</div>';
@@ -3409,11 +3473,11 @@ function renderTodayHTML(){
   // On desktop: all sections scroll on Today page
   // On mobile: Tasks/Leaves/Upcoming/Note open via bottom nav tabs (not shown here)
   SECTIONS.filter(s=>!s.isUpcoming&&!s.hidden).forEach(sec=>{ html+=renderAccordion(sec,null); });
-  // On mobile these are hidden — accessed via bottom nav. On desktop they scroll below.
   html+=`<div class="hide-on-mobile-view">`;
   html+=renderAccordion(SECTIONS.find(s=>s.isUpcoming),null);
-  html+=renderRemarksAccordion();
   html+=renderTasksSection();
+  html+=renderMeetingsSection();
+  html+=renderRemarksAccordion();
   html+=renderLeavesSection();
   html+=`</div>`;
   return html;
@@ -3812,43 +3876,70 @@ function addStoryRemark(sec, storyId, text, archKey){
   const story=arr?.find(s=>s.id===storyId); if(!story) return;
   if(!story.remarksList) story.remarksList=[];
   story.remarksList.push({ id:genId(), text:text.trim(), created:Date.now() });
-  saveAndPush();
-  render();
+  saveAndPush(); render();
+}
+function updateStoryRemark(sec, storyId, remarkId, text, archKey){
+  const arr=getArr(sec,archKey);
+  const story=arr?.find(s=>s.id===storyId); if(!story) return;
+  const r=(story.remarksList||[]).find(r=>r.id===remarkId); if(!r) return;
+  r.text=text.trim(); r.edited=Date.now();
+  saveAndPush(); render();
 }
 function deleteStoryRemark(sec, storyId, remarkId, archKey){
   const arr=getArr(sec,archKey);
   const story=arr?.find(s=>s.id===storyId); if(!story) return;
   story.remarksList=(story.remarksList||[]).filter(r=>r.id!==remarkId);
-  saveAndPush();
-  render();
+  saveAndPush(); render();
 }
 function submitStoryRemark(sec, storyId, archKey){
-  const inputId='sr-input-'+storyId;
-  const el=document.getElementById(inputId);
-  if(!el) return;
+  const el=document.getElementById('sr-input-'+storyId); if(!el) return;
   addStoryRemark(sec, storyId, el.value, archKey);
 }
+function submitStoryRemarkEdit(sec, storyId, remarkId, archKey){
+  const el=document.getElementById('sr-edit-'+storyId+'-'+remarkId); if(!el) return;
+  const text=el.value.trim(); if(!text){ toast('Enter remark text'); return; }
+  updateStoryRemark(sec, storyId, remarkId, text, archKey);
+  delete _storyRemarkEditId[storyId];
+}
+
+let _storyRemarkEditId={};  // storyId → remarkId being edited
+let _editingMainRemark=new Set();  // storyIds currently editing main remarks field
+
 function buildStoryRemarksHTML(sec, s, archKey){
   const archKeyJS=archKey?`'${archKey}'`:'null';
   const list=s.remarksList||[];
+  const editingId=_storyRemarkEditId[s.id];
   let html='<div class="story-remarks-list">';
   html+=`<div style="font-size:10.5px;font-weight:700;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">💬 Remarks${list.length?' ('+list.length+')':''}</div>`;
-  if(list.length){
-    list.forEach(r=>{
-      const dt=new Date(r.created).toLocaleDateString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-      html+=`<div class="sremark">
+  list.forEach(r=>{
+    const dt=new Date(r.created).toLocaleDateString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    if(editingId===r.id){
+      html+=`<div class="sremark" onclick="event.stopPropagation()">
+        <div class="sremark-body" style="width:100%">
+          <textarea class="ftextarea" id="sr-edit-${s.id}-${r.id}" style="min-height:52px;white-space:pre-wrap;width:100%" onkeydown="if(event.key==='Enter'){event.stopPropagation();}">${esc(r.text)}</textarea>
+          <div style="display:flex;gap:6px;margin-top:5px">
+            <button class="btn btn-accent btn-sm" onclick="event.stopPropagation();submitStoryRemarkEdit('${sec}','${s.id}','${r.id}',${archKeyJS})">Save</button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();delete _storyRemarkEditId['${s.id}'];render()">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+    } else {
+      html+=`<div class="sremark" onclick="event.stopPropagation()">
         <div class="sremark-body">
           <div class="sremark-text">${esc(r.text)}</div>
-          <div class="sremark-meta">${dt}</div>
+          <div class="sremark-meta">${dt}${r.edited?' · edited':''}</div>
         </div>
-        <button class="btn btn-ghost btn-xs btn-danger" onclick="deleteStoryRemark('${sec}','${s.id}','${r.id}',${archKeyJS});event.stopPropagation()" title="Delete">✕</button>
+        <div style="display:flex;gap:3px;flex-shrink:0">
+          <button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();_storyRemarkEditId['${s.id}']='${r.id}';render()" title="Edit">✏</button>
+          <button class="btn btn-ghost btn-xs btn-danger" onclick="event.stopPropagation();if(confirm('Delete this remark?'))deleteStoryRemark('${sec}','${s.id}','${r.id}',${archKeyJS})" title="Delete">🗑</button>
+        </div>
       </div>`;
-    });
-  }
+    }
+  });
   html+=`<div class="sremark-add" onclick="event.stopPropagation()">
-    <input class="finput" id="sr-input-${s.id}" placeholder="Add a remark…" style="flex:1;font-size:12px" 
-      onkeydown="if(event.key==='Enter'&&!event.shiftKey){submitStoryRemark('${sec}','${s.id}',${archKeyJS});event.preventDefault()}">
-    <button class="btn btn-ghost btn-sm" onclick="submitStoryRemark('${sec}','${s.id}',${archKeyJS});event.stopPropagation()">+ Add</button>
+    <input class="finput" id="sr-input-${s.id}" placeholder="Add a remark…" style="flex:1;font-size:12px"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.stopPropagation();submitStoryRemark('${sec}','${s.id}',${archKeyJS});event.preventDefault()}">
+    <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();submitStoryRemark('${sec}','${s.id}',${archKeyJS})">+ Add</button>
   </div>`;
   html+='</div>';
   return html;
@@ -4532,6 +4623,362 @@ function toggleNoteOpen(id){
   render();
 }
 
+/* ════════════════════════════════════════
+   MEETINGS SYSTEM
+════════════════════════════════════════ */
+let ui_meetingForm=false;
+let ui_editMeetingId=null;
+let ui_openMeetings=new Set();
+let ui_meetingRemarkForms={}; // meetingId → true/false
+let ui_editMeetingRemarkId={}; // meetingId → remarkId
+
+function addMeeting(data){
+  if(!state.meetings) state.meetings=[];
+  state.meetings.push({...data, id:genId(), created:Date.now(), remarks:[]});
+  saveAndPush();
+}
+function updateMeeting(id,data){
+  const i=(state.meetings||[]).findIndex(m=>m.id===id);
+  if(i>=0){ state.meetings[i]={...state.meetings[i],...data}; saveAndPush(); }
+}
+function deleteMeeting(id){
+  state.meetings=(state.meetings||[]).filter(m=>m.id!==id);
+  ui_openMeetings.delete(id);
+  saveAndPush(); render();
+}
+function addMeetingRemark(id, text){
+  const m=(state.meetings||[]).find(m=>m.id===id); if(!m) return;
+  if(!m.remarks) m.remarks=[];
+  m.remarks.push({id:genId(), text, created:Date.now()});
+  saveAndPush(); render();
+}
+function updateMeetingRemark(meetingId, remarkId, text){
+  const m=(state.meetings||[]).find(m=>m.id===meetingId); if(!m) return;
+  const r=(m.remarks||[]).find(r=>r.id===remarkId); if(!r) return;
+  r.text=text; r.edited=Date.now();
+  saveAndPush(); render();
+}
+function deleteMeetingRemark(meetingId, remarkId){
+  const m=(state.meetings||[]).find(m=>m.id===meetingId); if(!m) return;
+  m.remarks=(m.remarks||[]).filter(r=>r.id!==remarkId);
+  saveAndPush(); render();
+}
+function submitMeetingForm(){
+  const g=id=>(document.getElementById(id)||{}).value||'';
+  const isRecurring=document.getElementById('mf-recurring')?.checked||false;
+  // Collect participants
+  const participants=[];
+  document.querySelectorAll('.mf-participant-row').forEach(row=>{
+    const name=row.querySelector('.mf-p-name')?.value?.trim();
+    const isExt=row.querySelector('.mf-p-ext')?.checked||false;
+    if(name) participants.push({name, isExternal:isExt});
+  });
+  // Collect days of week if recurring weekly
+  const recurDaysOfWeek=[];
+  if(isRecurring){
+    ['sun','mon','tue','wed','thu','fri','sat'].forEach(d=>{
+      if(document.getElementById('mf-dow-'+d)?.checked) recurDaysOfWeek.push(d);
+    });
+  }
+  const data={
+    date:           g('mf-date'),
+    name:           g('mf-name').trim(),
+    time:           g('mf-time'),
+    status:         g('mf-status')||'scheduled',
+    isRecurring,
+    recurFreq:      isRecurring?g('mf-recur-freq'):'',
+    recurDaysOfWeek:isRecurring?recurDaysOfWeek:[],
+    recurDays:      isRecurring&&g('mf-recur-freq')==='custom'?parseInt(g('mf-recur-days'))||1:0,
+    agenda:         g('mf-agenda').trim(),
+    participants,
+    venue:          g('mf-venue').trim(),
+    reminder:       g('mf-reminder'),
+    reminderNote:   g('mf-reminder-note').trim(),
+  };
+  if(!data.name){ toast('Please enter a meeting name'); return; }
+  if(!data.date){ toast('Please set a date'); return; }
+  if(ui_editMeetingId){
+    updateMeeting(ui_editMeetingId, data);
+    toast('Meeting updated ✓');
+    ui_editMeetingId=null;
+  } else {
+    addMeeting(data);
+    toast('Meeting added ✓');
+  }
+  ui_meetingForm=false;
+  render();
+}
+function submitMeetingRemark(meetingId){
+  const ta=document.getElementById('mrf-text-'+meetingId);
+  const text=(ta?.value||'').trim();
+  if(!text){ toast('Enter remark text'); return; }
+  addMeetingRemark(meetingId, text);
+  ui_meetingRemarkForms[meetingId]=false;
+}
+function submitMeetingRemarkEdit(meetingId, remarkId){
+  const ta=document.getElementById('mref-text-'+meetingId+'-'+remarkId);
+  const text=(ta?.value||'').trim();
+  if(!text){ toast('Enter remark text'); return; }
+  updateMeetingRemark(meetingId, remarkId, text);
+  delete ui_editMeetingRemarkId[meetingId];
+}
+function editMeeting(id){
+  const m=(state.meetings||[]).find(m=>m.id===id); if(!m) return;
+  ui_meetingForm=true; ui_editMeetingId=id;
+  render();
+  setTimeout(()=>{
+    const set=(eid,val)=>{ const el=document.getElementById(eid); if(el) el.value=val||''; };
+    set('mf-date', m.date); set('mf-name', m.name); set('mf-time', m.time);
+    set('mf-status', m.status||'scheduled'); set('mf-agenda', m.agenda||'');
+    set('mf-venue', m.venue||''); set('mf-reminder', m.reminder||'off');
+    set('mf-reminder-note', m.reminderNote||'');
+    if(m.isRecurring&&document.getElementById('mf-recurring')){
+      document.getElementById('mf-recurring').checked=true;
+      document.getElementById('mf-recur-fields')&&(document.getElementById('mf-recur-fields').style.display='block');
+      set('mf-recur-freq', m.recurFreq||'daily');
+      toggleMeetingRecurFields();
+      set('mf-recur-days', m.recurDays||1);
+      if(m.recurFreq==='weekly'&&m.recurDaysOfWeek?.length){
+        m.recurDaysOfWeek.forEach(d=>{
+          const cb=document.getElementById('mf-dow-'+d);
+          if(cb) cb.checked=true;
+        });
+      }
+    }
+    // Restore participants
+    const wrap=document.getElementById('mf-participants-wrap');
+    if(wrap&&m.participants?.length){
+      wrap.innerHTML='';
+      m.participants.forEach(p=>addParticipantRow(p.name, p.isExternal));
+    }
+    document.getElementById('meeting-form-wrap')?.scrollIntoView({behavior:'smooth',block:'start'});
+  },0);
+}
+function addParticipantRow(name='', isExternal=false){
+  const wrap=document.getElementById('mf-participants-wrap'); if(!wrap) return;
+  const div=document.createElement('div'); div.className='mf-participant-row';
+  div.style.cssText='display:flex;align-items:center;gap:7px;margin-bottom:6px';
+  const sn=state.staffNames||{};
+  const allStaff=[...new Set([...(sn.correspondents||[]),...(sn.producers||[]),...(sn.shootEdit||[])])].sort();
+  const opts=allStaff.map(n=>`<option value="${esc(n)}">`).join('');
+  div.innerHTML=`<input class="finput mf-p-name" list="dl-staff-all" placeholder="Name (staff or external)" value="${esc(name)}" style="flex:1">
+    <label style="display:flex;align-items:center;gap:4px;font-size:11.5px;color:var(--text3);white-space:nowrap;flex-shrink:0">
+      <input type="checkbox" class="mf-p-ext"${isExternal?' checked':''}> External
+    </label>
+    <button type="button" class="btn btn-ghost btn-xs btn-danger" onclick="this.parentElement.remove()" style="flex-shrink:0">✕</button>`;
+  wrap.appendChild(div);
+}
+function toggleMeetingRecurring(){
+  const cb=document.getElementById('mf-recurring');
+  const fields=document.getElementById('mf-recur-fields');
+  if(fields) fields.style.display=cb?.checked?'block':'none';
+}
+function toggleMeetingRecurFields(){
+  const freq=document.getElementById('mf-recur-freq')?.value;
+  const daysWrap=document.getElementById('mf-recur-days-wrap');
+  const dowWrap=document.getElementById('mf-dow-wrap');
+  if(daysWrap) daysWrap.style.display=freq==='custom'?'block':'none';
+  if(dowWrap)  dowWrap.style.display=freq==='weekly'?'flex':'none';
+}
+
+function renderMeetingForm(){
+  const isEdit=!!ui_editMeetingId;
+  const today=todayStr();
+  return`<div class="meeting-form" id="meeting-form-wrap">
+    <div style="font-size:13px;font-weight:700;color:#6366f1;margin-bottom:12px">${isEdit?'✏ Edit Meeting':'+ New Meeting'}</div>
+    <div class="form-grid">
+      <div class="fgroup"><label class="flabel">Meeting Name *</label><input class="finput" id="mf-name" placeholder="Morning call, Editorial standup…" autocomplete="off"></div>
+      <div class="fgroup"><label class="flabel">Date *</label><input class="finput" type="date" id="mf-date" value="${today}"></div>
+      <div class="fgroup"><label class="flabel">Time</label><input class="finput" type="time" id="mf-time"></div>
+      <div class="fgroup"><label class="flabel">Status</label>
+        <select class="fselect" id="mf-status">
+          <option value="scheduled">📅 Scheduled</option>
+          <option value="done">✅ Done</option>
+          <option value="cancelled">🚫 Cancelled</option>
+        </select>
+      </div>
+      <div class="fgroup full">
+        <label class="flabel" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="mf-recurring" onchange="toggleMeetingRecurring()" style="width:14px;height:14px">
+          <span>Recurring meeting</span>
+          <span style="font-size:10.5px;color:var(--text3);font-family:var(--mono)">— repeats on a schedule</span>
+        </label>
+        <div id="mf-recur-fields" style="display:none;margin-top:10px;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+          <div class="form-grid">
+            <div class="fgroup"><label class="flabel">Repeats every</label>
+              <select class="fselect" id="mf-recur-freq" onchange="toggleMeetingRecurFields()">
+                <option value="daily">Day</option>
+                <option value="weekly">Selected days of week</option>
+                <option value="custom">Custom (every X days)</option>
+              </select>
+            </div>
+            <div id="mf-recur-days-wrap" style="display:none">
+              <div class="fgroup"><label class="flabel">Every X days</label><input class="finput" type="number" id="mf-recur-days" value="7" min="1" style="width:80px"></div>
+            </div>
+          </div>
+          <div id="mf-dow-wrap" style="display:none;margin-top:8px">
+            <div class="flabel" style="margin-bottom:6px">Repeats on</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i)=>{
+                const key=d.toLowerCase().slice(0,3);
+                return`<label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2)">
+                  <input type="checkbox" id="mf-dow-${key}" value="${key}" style="width:12px;height:12px"> ${d}
+                </label>`;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="fgroup full"><label class="flabel">Agenda</label><textarea class="ftextarea" id="mf-agenda" placeholder="What will be discussed…" style="min-height:60px;white-space:pre-wrap" onkeydown="if(event.key==='Enter'){event.stopPropagation();}"></textarea></div>
+      <div class="fgroup full">
+        <label class="flabel">Participants</label>
+        <div id="mf-participants-wrap"></div>
+        <div style="display:flex;gap:7px;margin-top:6px">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="addParticipantRow()">+ Add Person</button>
+        </div>
+      </div>
+      <div class="fgroup full"><label class="flabel">Venue / Link</label><input class="finput" id="mf-venue" placeholder="Room name, office, or meeting link (https://…)"></div>
+      <div class="fgroup"><label class="flabel">Reminder</label>
+        <select class="fselect" id="mf-reminder">
+          <option value="off">Off</option>
+          <option value="15min">15 min before</option>
+          <option value="30min">30 min before</option>
+          <option value="1hr">1 hour before</option>
+          <option value="1day">1 day before</option>
+        </select>
+      </div>
+      <div class="fgroup"><label class="flabel">Reminder Note</label><input class="finput" id="mf-reminder-note" placeholder="e.g. Prepare talking points"></div>
+    </div>
+    <div style="display:flex;gap:7px;margin-top:10px">
+      <button class="btn btn-accent" onclick="submitMeetingForm()">${isEdit?'Update Meeting':'Add Meeting'}</button>
+      <button class="btn btn-ghost" onclick="ui_meetingForm=false;ui_editMeetingId=null;render()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function renderMeetingCard(m){
+  const isOpen=ui_openMeetings.has(m.id);
+  const timeStr=m.time?m.time:'—';
+  const dateStr2=m.date?new Date(m.date+'T12:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short'}):'';
+  const stCls=m.status==='done'?'mc-done':m.status==='cancelled'?'mc-cancelled':'';
+  const stBadge=m.status==='done'?'msb-done':m.status==='cancelled'?'msb-cancelled':'msb-scheduled';
+  const stLabel=m.status==='done'?'✅ Done':m.status==='cancelled'?'🚫 Cancelled':'📅 Scheduled';
+  const pCount=(m.participants||[]).length;
+  const venueIsLink=m.venue&&m.venue.startsWith('http');
+  const venueMapLink=m.venue&&!venueIsLink?`https://maps.google.com/?q=${encodeURIComponent(m.venue)}`:'';
+  const showRemarkForm=ui_meetingRemarkForms[m.id];
+  const editingRemarkId=ui_editMeetingRemarkId[m.id];
+
+  return`<div class="meeting-card ${stCls}" data-id="${m.id}">
+  <div class="meeting-top" onclick="ui_openMeetings.has('${m.id}')?ui_openMeetings.delete('${m.id}'):ui_openMeetings.add('${m.id}');render()">
+    <div class="meeting-time-block">
+      <div class="meeting-time-hr">${esc(timeStr)}</div>
+      <div class="meeting-time-date">${dateStr2}</div>
+    </div>
+    <div class="meeting-title-wrap">
+      <div class="meeting-name">${esc(m.name||'Untitled')}</div>
+      <div class="meeting-meta">${pCount?pCount+' participant'+(pCount>1?'s':''):''}${pCount&&m.venue?' · ':''}${m.venue?esc(m.venue.replace(/^https?:\/\//,'').slice(0,40)):''}</div>
+    </div>
+    <button class="btn btn-ghost btn-xs btn-danger" style="flex-shrink:0;padding:3px 7px" onclick="event.stopPropagation();if(confirm('Delete this meeting?'))deleteMeeting('${m.id}')" title="Delete">🗑</button>
+    <span class="meeting-status-badge ${stBadge}">${stLabel}</span>
+    <span class="chevron${isOpen?' open':''}" style="margin-left:4px">▾</span>
+  </div>
+  <div class="meeting-body${isOpen?' open':''}">
+    <div class="card-fields" style="margin-top:8px">
+      ${m.date?`<div><div class="cfield-label">Date</div><div class="cfield-value">${new Date(m.date+'T12:00:00').toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div></div>`:''}
+      ${m.time?`<div><div class="cfield-label">Time</div><div class="cfield-value">${esc(m.time)}</div></div>`:''}
+      ${m.agenda?`<div style="grid-column:1/-1"><div class="cfield-label">Agenda</div><div class="cfield-value" style="white-space:pre-wrap">${esc(m.agenda)}</div></div>`:''}
+      ${m.venue?`<div><div class="cfield-label">Venue</div><div class="cfield-value">${venueIsLink?`<a href="${esc(m.venue)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--accent)">🔗 Open link</a>`:venueMapLink?`${esc(m.venue)} <a href="${venueMapLink}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--accent);margin-left:6px;font-size:11px">📍 Map</a>`:esc(m.venue)}</div></div>`:''}
+      ${m.reminder&&m.reminder!=='off'?`<div><div class="cfield-label">Reminder</div><div class="cfield-value">⏰ ${esc(m.reminder)}${m.reminderNote?' — '+esc(m.reminderNote):''}</div></div>`:''}
+      ${m.isRecurring?`<div><div class="cfield-label">Recurrence</div><div class="cfield-value">🔁 ${
+        m.recurFreq==='weekly'&&m.recurDaysOfWeek?.length
+          ? 'Weekly on '+m.recurDaysOfWeek.map(d=>d.charAt(0).toUpperCase()+d.slice(1)).join(', ')
+          : m.recurFreq==='custom'
+          ? 'Every '+m.recurDays+'d'
+          : 'Daily'
+      }</div></div>`:''}
+    </div>
+    ${(m.participants||[]).length?`<div style="margin-top:10px">
+      <div class="cfield-label" style="margin-bottom:5px">Participants</div>
+      <div class="meeting-participants">
+        ${m.participants.map(p=>`<span class="participant-chip${p.isExternal?' ext':''}">${p.isExternal?'👤':'👥'} ${esc(p.name)}</span>`).join('')}
+      </div>
+    </div>`:''}
+    <div class="meeting-remarks-list">
+      ${(m.remarks||[]).length?`<div class="cfield-label" style="margin:10px 0 5px">Remarks</div>`:''}
+      ${(m.remarks||[]).map(r=>{
+        if(editingRemarkId===r.id){
+          return`<div style="margin-bottom:6px">
+            <textarea class="ftextarea" id="mref-text-${m.id}-${r.id}" style="min-height:52px;white-space:pre-wrap" onkeydown="if(event.key==='Enter'){event.stopPropagation();}">${esc(r.text)}</textarea>
+            <div style="display:flex;gap:6px;margin-top:5px">
+              <button class="btn btn-accent btn-sm" onclick="submitMeetingRemarkEdit('${m.id}','${r.id}')">Save</button>
+              <button class="btn btn-ghost btn-sm" onclick="delete ui_editMeetingRemarkId['${m.id}'];render()">Cancel</button>
+            </div>
+          </div>`;
+        }
+        const dt=new Date(r.created).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+        return`<div class="mremark">
+          <div class="mremark-text">${esc(r.text)}</div>
+          <div class="mremark-meta">${dt}${r.edited?' · edited':''}
+            <button class="btn btn-ghost btn-xs" style="margin-left:8px" onclick="ui_editMeetingRemarkId['${m.id}']='${r.id}';render()">✏</button>
+            <button class="btn btn-ghost btn-xs btn-danger" style="margin-left:4px" onclick="if(confirm('Delete this remark?'))deleteMeetingRemark('${m.id}','${r.id}')">🗑</button>
+          </div>
+        </div>`;
+      }).join('')}
+      ${showRemarkForm?`<div style="margin-top:8px">
+        <textarea class="ftextarea" id="mrf-text-${m.id}" placeholder="Add a remark…" style="min-height:52px;white-space:pre-wrap" onkeydown="if(event.key==='Enter'){event.stopPropagation();}"></textarea>
+        <div style="display:flex;gap:6px;margin-top:5px">
+          <button class="btn btn-accent btn-sm" onclick="submitMeetingRemark('${m.id}')">Save Remark</button>
+          <button class="btn btn-ghost btn-sm" onclick="ui_meetingRemarkForms['${m.id}']=false;render()">Cancel</button>
+        </div>
+      </div>`:`<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="ui_meetingRemarkForms['${m.id}']=true;render()">+ Add Remark</button>`}
+    </div>
+    <div style="display:flex;gap:7px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="editMeeting('${m.id}')">✏ Edit</button>
+      ${m.status!=='done'?`<button class="btn btn-done-active btn-sm" onclick="updateMeeting('${m.id}',{status:'done'});render()">✅ Mark Done</button>`:''}
+      ${m.status==='done'?`<button class="btn btn-ghost btn-sm" onclick="updateMeeting('${m.id}',{status:'scheduled'});render()">↩ Reopen</button>`:''}
+      ${m.status!=='cancelled'?`<button class="btn btn-ghost btn-sm" onclick="updateMeeting('${m.id}',{status:'cancelled'});render()">🚫 Cancel</button>`:`<button class="btn btn-ghost btn-sm" onclick="updateMeeting('${m.id}',{status:'scheduled'});render()">↩ Reschedule</button>`}
+    </div>
+  </div>
+</div>`;
+}
+
+function renderMeetingsSection(){
+  if(!state.meetings) state.meetings=[];
+  const isOpen=ui.openSections.has('meetings');
+  const today=todayStr();
+  const meetings=[...state.meetings].sort((a,b)=>{
+    const da=(a.date||'')+(a.time||'');
+    const db=(b.date||'')+(b.time||'');
+    return da.localeCompare(db);
+  });
+  const activeCount=meetings.filter(m=>m.status!=='done'&&m.status!=='cancelled').length;
+
+  let body=`<div id="meetings-section">`;
+  body+=`<div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+    <button class="btn btn-accent btn-sm" onclick="ui_meetingForm=!ui_meetingForm;ui_editMeetingId=null;render();setTimeout(()=>document.getElementById('mf-name')?.focus(),60)">+ Add Meeting</button>
+  </div>`;
+  if(ui_meetingForm) body+=renderMeetingForm();
+  if(!meetings.length&&!ui_meetingForm){
+    body+=`<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-msg">No meetings yet</div></div>`;
+  } else {
+    meetings.forEach(m=>{ body+=renderMeetingCard(m); });
+  }
+  body+=`</div>`;
+
+  return`<div class="accordion${isOpen?' acc-open':''}" id="acc-meetings">
+    <div class="acc-header" onclick="toggleAccordion('meetings')">
+      <span class="acc-icon">📅</span>
+      <span class="acc-name">Meetings</span>
+      <div class="acc-meta">
+        ${activeCount?`<span class="sbadge sb-in-progress">${activeCount} scheduled</span>`:''}
+      </div>
+      <span class="acc-chevron${isOpen?' open':''}" id="acc-chev-meetings">▾</span>
+    </div>
+    <div class="acc-body${isOpen?' open':''}" id="acc-body-meetings">${body}</div>
+  </div>`;
+}
+
 function renderRemarksAccordion(){
   if(!state.notes) state.notes=[];
   const isOpen=ui.openSections.has('remarks');
@@ -4955,7 +5402,9 @@ function renderLeaveCard(l,today,isPast){
       <div><div class="cfield-label">Duration</div><div class="cfield-value">${days} day${days!==1?'s':''}</div></div>
       <div><div class="cfield-label">Status</div><div class="cfield-value">${l.status==='approved'?'✅ Approved':'⏳ Pending'}</div></div>
     </div>
-    ${l.reason?`<div class="card-remarks">💬 ${esc(l.reason)}</div>`:''}
+    <div class="card-remarks" onclick="event.stopPropagation()">
+      ${l.reason?`💬 ${esc(l.reason)} <button class="btn btn-ghost btn-xs" style="font-style:normal" onclick="event.stopPropagation();editLeave('${l.id}')" title="Edit reason">✏</button>`:`<button class="btn btn-ghost btn-xs" style="font-style:normal;color:var(--text3)" onclick="event.stopPropagation();editLeave('${l.id}')">+ Add reason</button>`}
+    </div>
     <div class="leave-btns">
       ${l.status==='pending'
         ?`<button class="btn btn-done-active btn-sm" onclick="updateLeave('${l.id}',{status:'approved'});render();event.stopPropagation()">✅ Approve</button>`
@@ -5032,7 +5481,7 @@ function renderUpcomingRow(sec,s,archKey){
       ${s.deadline_date?field('Deadline',s.deadline_date+(s.deadline_uk?' · '+s.deadline_uk+' '+ukLabel():'')+(s.deadline_ist?' / '+s.deadline_ist+' IST':'')):''}
       ${s.reminder&&s.reminder!=='off'?field('Reminder','⏰ '+s.reminder):''}
     </div>
-    ${remarksHTML(s.remarks, s.id+'_cr')}
+    ${remarksHTML(s.remarks, s.id+'_cr', sec, s.id, archKey)}
     ${linksHtml}
     ${s.completion_note||s.completion_links?`<div class="completion-box"><div class="completion-label">✅ Completion Notes</div>${s.completion_note?`<div class="completion-note">${esc(s.completion_note)}</div>`:''} ${clHtml}</div>`:''}
     <div id="compl-form-${s.id}" style="display:${isComplOpen?'block':'none'}">
@@ -5127,7 +5576,7 @@ function renderStoryCard(sec,s,archKey){
       ${reqTime?field('Logged At',reqTime):''}
       ${s.reminder&&s.reminder!=='off'?field('Reminder','⏰ '+s.reminder):''}
     </div>
-    ${remarksHTML(s.remarks, s.id+'_cr')}
+    ${remarksHTML(s.remarks, s.id+'_cr', sec, s.id, archKey)}
     ${(sec==='ibu'||sec==='other')?buildStoryRemarksHTML(sec,s,archKey):''}
     ${s.location==='Field'?buildStoryTravelHTML(sec,s,archKey):''}
     ${linksHtml}
@@ -5181,7 +5630,7 @@ function renderForm(sec,archKey){
   const isEdit=!!(archKey?ui.editMap[sec+'::'+archKey]:ui.editMap[sec]);
   const sfx='-'+sec+(archKey?'-arch':'');
   const archKeyJS=archKey?`'${archKey}'`:'null';
-  if(isUpcoming) return renderUpcomingForm(sec,archKey,isEdit,sfx,archKeyJS);
+  if(isUpcoming) return renderUpcomingForm(sec,archKey,isEdit,sfx,archKeyJS,editStoryObj);
 
   // For edit, load existing broadcast_times; for new, start with one empty slot
   const editStoryObj=isEdit?(getArr(sec,archKey)||[]).find(s=>s.id===(archKey?ui.editMap[sec+'::'+archKey]:ui.editMap[sec])):null;
@@ -5190,46 +5639,46 @@ function renderForm(sec,archKey){
   return`<div class="form-wrap" id="story-form-${sec}${archKey?'-arch':''}">
   <div class="form-title">${isEdit?'✏ Edit Story':'+ New Story'}</div>
   <div class="form-grid">
-    <div class="fgroup full"><label class="flabel">Title / Slug *</label><input class="finput" id="f-title${sfx}" placeholder="Working title or slug…" autocomplete="off"></div>
+    <div class="fgroup full"><label class="flabel">Title / Slug *</label><input class="finput" id="f-title${sfx}" placeholder="Working title or slug…" autocomplete="off" value="${esc(editStoryObj?.title||'')}"></div>
     ${isIBU?`<div class="fgroup full">
       <label class="flabel">Live Type</label>
       <div style="display:flex;gap:8px;margin-top:4px">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;padding:7px 14px;border:1px solid var(--border);border-radius:7px;background:var(--surface2)">
-          <input type="radio" name="live-type${sfx}" id="f-live-ibu${sfx}" value="ibu" checked style="accent-color:var(--accent)"> <span>IBU</span>
+          <input type="radio" name="live-type${sfx}" id="f-live-ibu${sfx}" value="ibu" ${(editStoryObj?.live_type||'ibu')==='ibu'?'checked':''} style="accent-color:var(--accent)"> <span>IBU</span>
         </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;padding:7px 14px;border:1px solid var(--border);border-radius:7px;background:var(--surface2)">
-          <input type="radio" name="live-type${sfx}" id="f-live-nonibu${sfx}" value="nonibu" style="accent-color:var(--working)"> <span>Non-IBU</span>
+          <input type="radio" name="live-type${sfx}" id="f-live-nonibu${sfx}" value="nonibu" ${editStoryObj?.live_type==='nonibu'?'checked':''} style="accent-color:var(--working)"> <span>Non-IBU</span>
         </label>
       </div>
     </div>`:''}
     <div class="form-divider">People</div>
     <div class="fgroup"><label class="flabel">Correspondent</label>
       <div style="display:flex;gap:5px;align-items:center">
-        <input class="finput" id="f-correspondent${sfx}" placeholder="Name or leave blank" list="dl-correspondents" autocomplete="off" style="flex:1">
+        <input class="finput" id="f-correspondent${sfx}" placeholder="Name or leave blank" list="dl-correspondents" autocomplete="off" style="flex:1" value="${esc(editStoryObj?.correspondent||'')}">
         <button type="button" class="btn btn-ghost btn-xs btn-danger" onclick="document.getElementById('f-correspondent${sfx}').value=''" title="Clear">✕</button>
       </div>
     </div>
     <div class="fgroup"><label class="flabel">Producer</label>
       <div style="display:flex;gap:5px;align-items:center">
-        <input class="finput" id="f-producer${sfx}" placeholder="Name or leave blank" list="dl-producers" autocomplete="off" style="flex:1">
+        <input class="finput" id="f-producer${sfx}" placeholder="Name or leave blank" list="dl-producers" autocomplete="off" style="flex:1" value="${esc(editStoryObj?.producer||'')}">
         <button type="button" class="btn btn-ghost btn-xs btn-danger" onclick="document.getElementById('f-producer${sfx}').value=''" title="Clear">✕</button>
       </div>
     </div>
     <div class="fgroup"><label class="flabel">Shoot-Edit</label>
       <div style="display:flex;gap:5px;align-items:center">
-        <input class="finput" id="f-shoot-edit${sfx}" placeholder="Person or team or leave blank" list="dl-shoot" autocomplete="off" style="flex:1">
+        <input class="finput" id="f-shoot-edit${sfx}" placeholder="Person or team or leave blank" list="dl-shoot" autocomplete="off" style="flex:1" value="${esc(editStoryObj?.shoot_edit||'')}">
         <button type="button" class="btn btn-ghost btn-xs btn-danger" onclick="document.getElementById('f-shoot-edit${sfx}').value=''" title="Clear">✕</button>
       </div>
     </div>
     <div class="form-divider">Location</div>
     <div class="fgroup"><label class="flabel">Location Type</label>
       <select class="fselect" id="f-location${sfx}" onchange="showFieldRow('${sec}',${archKeyJS})">
-        <option value="">– Select –</option><option value="Studio">Studio</option><option value="Field">Field</option><option value="Remote">Remote</option>
+        <option value="">– Select –</option><option value="Studio"${editStoryObj?.location==='Studio'?' selected':''}>Studio</option><option value="Field"${editStoryObj?.location==='Field'?' selected':''}>Field</option><option value="Remote"${editStoryObj?.location==='Remote'?' selected':''}>Remote</option>
       </select>
     </div>
     <div class="fgroup">
       <label class="flabel">Location Detail</label>
-      <input class="finput" id="f-field-location${sfx}" placeholder="">
+      <input class="finput" id="f-field-location${sfx}" placeholder="" value="${esc(editStoryObj?.field_location||'')}">
     </div>
     <div id="travel-wrap${sfx}" class="fgroup full" style="display:${editStoryObj?.location==='Field'?'block':'none'}">
       <div class="form-divider" style="margin-top:0">🗺 Travel Details</div>
@@ -5243,34 +5692,34 @@ function renderForm(sec,archKey){
     </div>
     <div class="form-divider">Deadline</div>
     <div class="deadline-split">
-      <div class="fgroup"><label class="flabel">Deadline Date</label><input class="finput" type="date" id="f-deadline-date${sfx}"></div>
-      <div class="fgroup"><label class="flabel">Deadline UK Time <span class="flabel-hint">${ukLabel()}</span></label><input class="finput" id="f-deadline-uk${sfx}" placeholder="17:00" oninput="onDeadlineUKChange('${sec}',${archKeyJS})" maxlength="5"></div>
-      <div class="fgroup"><label class="flabel">Deadline IST Time</label><input class="finput" id="f-deadline-ist${sfx}" placeholder="22:30" oninput="onDeadlineISTChange('${sec}',${archKeyJS})" maxlength="5"></div>
+      <div class="fgroup"><label class="flabel">Deadline Date</label><input class="finput" type="date" id="f-deadline-date${sfx}" value="${esc(editStoryObj?.deadline_date||'')}"></div>
+      <div class="fgroup"><label class="flabel">Deadline UK Time <span class="flabel-hint">${ukLabel()}</span></label><input class="finput" id="f-deadline-uk${sfx}" placeholder="17:00" oninput="onDeadlineUKChange('${sec}',${archKeyJS})" maxlength="5" value="${esc(editStoryObj?.deadline_uk||'')}"></div>
+      <div class="fgroup"><label class="flabel">Deadline IST Time</label><input class="finput" id="f-deadline-ist${sfx}" placeholder="22:30" oninput="onDeadlineISTChange('${sec}',${archKeyJS})" maxlength="5" value="${esc(editStoryObj?.deadline_ist||'')}"></div>
     </div>
     <div class="form-divider">Request Details</div>
-    <div class="fgroup"><label class="flabel">Requested By</label><input class="finput" id="f-req-name${sfx}" placeholder="Name"></div>
-    <div class="fgroup"><label class="flabel">Their Team</label><input class="finput" id="f-req-team${sfx}" placeholder="Team"></div>
-    <div class="fgroup"><label class="flabel">Their Location</label><input class="finput" id="f-req-location${sfx}" placeholder="City / office"></div>
+    <div class="fgroup"><label class="flabel">Requested By</label><input class="finput" id="f-req-name${sfx}" placeholder="Name" value="${esc(editStoryObj?.req_name||'')}"></div>
+    <div class="fgroup"><label class="flabel">Their Team</label><input class="finput" id="f-req-team${sfx}" placeholder="Team" value="${esc(editStoryObj?.req_team||'')}"></div>
+    <div class="fgroup"><label class="flabel">Their Location</label><input class="finput" id="f-req-location${sfx}" placeholder="City / office" value="${esc(editStoryObj?.req_location||'')}"></div>
     <div class="form-divider">Status &amp; Reminder</div>
     <div class="fgroup"><label class="flabel">Status</label>
       <select class="fselect" id="f-status${sfx}">
         <option value="">– Select –</option>
-        <option value="urgent">🔴 Urgent</option>
-        <option value="in-progress">🟡 In Progress</option>
-        <option value="completed">🟢 Completed</option>
-        <option value="not-done">⚫ Not Done</option>
-        <option value="postponed">🔵 Postponed</option>
-        <option value="on-hold">🟣 On Hold</option>
-        <option value="shelved">🗄 Shelved</option>
+        <option value="urgent"${editStoryObj?.status==='urgent'?' selected':''}>🔴 Urgent</option>
+        <option value="in-progress"${editStoryObj?.status==='in-progress'?' selected':''}>🟡 In Progress</option>
+        <option value="completed"${editStoryObj?.status==='completed'?' selected':''}>🟢 Completed</option>
+        <option value="not-done"${editStoryObj?.status==='not-done'?' selected':''}>⚫ Not Done</option>
+        <option value="postponed"${editStoryObj?.status==='postponed'?' selected':''}>🔵 Postponed</option>
+        <option value="on-hold"${editStoryObj?.status==='on-hold'?' selected':''}>🟣 On Hold</option>
+        <option value="shelved"${editStoryObj?.status==='shelved'?' selected':''}>🗄 Shelved</option>
       </select>
     </div>
     <div class="fgroup"><label class="flabel">Reminder</label>
       <select class="fselect" id="f-reminder${sfx}">
-        <option value="off">Off</option><option value="15min">15 min</option><option value="30min">30 min</option><option value="1hr">1 hour</option><option value="4hr">4 hours</option><option value="1day">1 day</option><option value="1week">1 week</option>
+        <option value="off"${(editStoryObj?.reminder||'off')==='off'?' selected':''}>Off</option><option value="15min"${editStoryObj?.reminder==='15min'?' selected':''}>15 min</option><option value="30min"${editStoryObj?.reminder==='30min'?' selected':''}>30 min</option><option value="1hr"${editStoryObj?.reminder==='1hr'?' selected':''}>1 hour</option><option value="4hr"${editStoryObj?.reminder==='4hr'?' selected':''}>4 hours</option><option value="1day"${editStoryObj?.reminder==='1day'?' selected':''}>1 day</option><option value="1week"${editStoryObj?.reminder==='1week'?' selected':''}>1 week</option>
       </select>
     </div>
-    <div class="fgroup full"><label class="flabel">Remarks</label><textarea class="ftextarea" id="f-remarks${sfx}" placeholder="Notes, context…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.stopPropagation();}" style="white-space:pre-wrap"></textarea></div>
-    <div class="fgroup full"><label class="flabel">Reference Links (comma-separated)</label><input class="finput" id="f-links${sfx}" placeholder="https://…"></div>
+    <div class="fgroup full"><label class="flabel">Remarks</label><textarea class="ftextarea" id="f-remarks${sfx}" placeholder="Notes, context…" onkeydown="if(event.key==='Enter'){event.stopPropagation();}" style="white-space:pre-wrap;min-height:80px">${esc(editStoryObj?.remarks||'')}</textarea></div>
+    <div class="fgroup full"><label class="flabel">Reference Links (comma-separated)</label><input class="finput" id="f-links${sfx}" placeholder="https://…" value="${esc(editStoryObj?.links||'')}"></div>
   </div>
   <div class="form-footer">
     <button class="btn btn-accent" onclick="submitForm('${sec}',${archKeyJS})">${isEdit?'Update Story':'Add Story'}</button>
@@ -5279,48 +5728,49 @@ function renderForm(sec,archKey){
 </div>`;
 }
 
-function renderUpcomingForm(sec,archKey,isEdit,sfx,archKeyJS){
+function renderUpcomingForm(sec,archKey,isEdit,sfx,archKeyJS,editStoryObj){
+  const ev=editStoryObj||{};
   return`<div class="form-wrap" id="story-form-${sec}${archKey?'-arch':''}" style="border-color:var(--upcoming)">
   <div class="form-title" style="color:var(--upcoming)">${isEdit?'✏ Edit Upcoming Story':'+ New Upcoming Story'}</div>
   <div class="form-grid">
-    <div class="fgroup full"><label class="flabel">Title *</label><input class="finput" id="f-title${sfx}" placeholder="Story title or working title…" autocomplete="off"></div>
-    <div class="fgroup full"><label class="flabel">Detail</label><textarea class="ftextarea" id="f-detail${sfx}" placeholder="Background, what the story is about, key details…"></textarea></div>
+    <div class="fgroup full"><label class="flabel">Title *</label><input class="finput" id="f-title${sfx}" placeholder="Story title or working title…" autocomplete="off" value="${esc(ev.title||'')}"></div>
+    <div class="fgroup full"><label class="flabel">Detail</label><textarea class="ftextarea" id="f-detail${sfx}" placeholder="Background, what the story is about, key details…">${esc(ev.detail||'')}</textarea></div>
     <div class="form-divider">When Expected</div>
     <div class="fgroup full">
       <label class="flabel">Expected</label>
       <div class="expected-row">
         <select class="fselect" id="f-expected-type${sfx}" style="width:110px;flex-shrink:0" onchange="updateExpectedInput('${sec}',${archKeyJS})">
-          <option value="date">Specific date</option>
-          <option value="week">Week of</option>
-          <option value="month">Month</option>
+          <option value="date"${(ev.expected_type||'date')==='date'?' selected':''}>Specific date</option>
+          <option value="week"${ev.expected_type==='week'?' selected':''}>Week of</option>
+          <option value="month"${ev.expected_type==='month'?' selected':''}>Month</option>
         </select>
-        <input class="finput" type="date" id="f-expected-date${sfx}" placeholder="Pick date">
+        <input class="finput" type="date" id="f-expected-date${sfx}" value="${esc(ev.expected_date||'')}">
       </div>
     </div>
     <div class="form-divider">Deadline</div>
     <div class="deadline-split">
-      <div class="fgroup"><label class="flabel">Deadline Date</label><input class="finput" type="date" id="f-deadline-date${sfx}"></div>
-      <div class="fgroup"><label class="flabel">Deadline UK <span class="flabel-hint">${ukLabel()}</span></label><input class="finput" id="f-deadline-uk${sfx}" placeholder="17:00" oninput="onDeadlineUKChange('${sec}',${archKeyJS})" maxlength="5"></div>
-      <div class="fgroup"><label class="flabel">Deadline IST</label><input class="finput" id="f-deadline-ist${sfx}" placeholder="22:30" oninput="onDeadlineISTChange('${sec}',${archKeyJS})" maxlength="5"></div>
+      <div class="fgroup"><label class="flabel">Deadline Date</label><input class="finput" type="date" id="f-deadline-date${sfx}" value="${esc(ev.deadline_date||'')}"></div>
+      <div class="fgroup"><label class="flabel">Deadline UK <span class="flabel-hint">${ukLabel()}</span></label><input class="finput" id="f-deadline-uk${sfx}" placeholder="17:00" oninput="onDeadlineUKChange('${sec}',${archKeyJS})" maxlength="5" value="${esc(ev.deadline_uk||'')}"></div>
+      <div class="fgroup"><label class="flabel">Deadline IST</label><input class="finput" id="f-deadline-ist${sfx}" placeholder="22:30" oninput="onDeadlineISTChange('${sec}',${archKeyJS})" maxlength="5" value="${esc(ev.deadline_ist||'')}"></div>
     </div>
     <div class="form-divider">People &amp; Status</div>
-    <div class="fgroup"><label class="flabel">Correspondent Deployed</label><input class="finput" id="f-correspondent${sfx}" placeholder="Name"></div>
+    <div class="fgroup"><label class="flabel">Correspondent Deployed</label><input class="finput" id="f-correspondent${sfx}" placeholder="Name" value="${esc(ev.correspondent||'')}"></div>
     <div class="fgroup"><label class="flabel">Status</label>
       <select class="fselect" id="f-status${sfx}">
-        <option value="not-started">⚪ Not Started</option>
-        <option value="in-progress">🟡 In Progress</option>
-        <option value="urgent">🔴 Urgent</option>
-        <option value="on-hold">🟣 On Hold</option>
-        <option value="completed">🟢 Completed</option>
+        <option value="not-started"${(ev.status||'not-started')==='not-started'?' selected':''}>⚪ Not Started</option>
+        <option value="in-progress"${ev.status==='in-progress'?' selected':''}>🟡 In Progress</option>
+        <option value="urgent"${ev.status==='urgent'?' selected':''}>🔴 Urgent</option>
+        <option value="on-hold"${ev.status==='on-hold'?' selected':''}>🟣 On Hold</option>
+        <option value="completed"${ev.status==='completed'?' selected':''}>🟢 Completed</option>
       </select>
     </div>
     <div class="fgroup"><label class="flabel">Reminder</label>
       <select class="fselect" id="f-reminder${sfx}">
-        <option value="off">Off</option><option value="15min">15 min</option><option value="30min">30 min</option><option value="1hr">1 hour</option><option value="4hr">4 hours</option><option value="1day">1 day</option><option value="1week">1 week</option>
+        <option value="off"${(ev.reminder||'off')==='off'?' selected':''}>Off</option><option value="15min"${ev.reminder==='15min'?' selected':''}>15 min</option><option value="30min"${ev.reminder==='30min'?' selected':''}>30 min</option><option value="1hr"${ev.reminder==='1hr'?' selected':''}>1 hour</option><option value="4hr"${ev.reminder==='4hr'?' selected':''}>4 hours</option><option value="1day"${ev.reminder==='1day'?' selected':''}>1 day</option><option value="1week"${ev.reminder==='1week'?' selected':''}>1 week</option>
       </select>
     </div>
-    <div class="fgroup full"><label class="flabel">Remarks &amp; Any Relevant Detail</label><textarea class="ftextarea" id="f-remarks${sfx}" placeholder="Context, previous coverage, contacts, logistics…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.stopPropagation();}" style="white-space:pre-wrap"></textarea></div>
-    <div class="fgroup full"><label class="flabel">Reference Links (comma-separated)</label><input class="finput" id="f-links${sfx}" placeholder="https://…"></div>
+    <div class="fgroup full"><label class="flabel">Remarks &amp; Any Relevant Detail</label><textarea class="ftextarea" id="f-remarks${sfx}" placeholder="Context, previous coverage, contacts, logistics…" onkeydown="if(event.key==='Enter'){event.stopPropagation();}" style="white-space:pre-wrap;min-height:80px">${esc(ev.remarks||'')}</textarea></div>
+    <div class="fgroup full"><label class="flabel">Reference Links (comma-separated)</label><input class="finput" id="f-links${sfx}" placeholder="https://…" value="${esc(ev.links||'')}"></div>
   </div>
   <div class="form-footer">
     <button class="btn btn-accent" onclick="submitForm('${sec}',${archKeyJS})">${isEdit?'Update':'Add to Upcoming'}</button>
@@ -5399,20 +5849,20 @@ function init(){
 document.addEventListener('DOMContentLoaded', init);
 </script>
 <nav class="bottom-nav-bar" id="bottom-nav-bar">
-  <button class="bnb-item" id="bnb-today" onclick="bnbNav('today')">
-    <span class="bnb-icon">🏠</span>Today
-  </button>
   <button class="bnb-item" id="bnb-tasks" onclick="bnbNav('tasks')">
-    <span class="bnb-icon">☑</span>Tasks
+    <span class="bnb-icon">☑</span><span>Tasks</span>
+  </button>
+  <button class="bnb-item" id="bnb-meetings" onclick="bnbNav('meetings')">
+    <span class="bnb-icon">📅</span><span>Meet</span>
   </button>
   <button class="bnb-item" id="bnb-leaves" onclick="bnbNav('leaves')">
-    <span class="bnb-icon">🌴</span>Leaves
+    <span class="bnb-icon">🌴</span><span>Leaves</span>
   </button>
   <button class="bnb-item" id="bnb-upcoming" onclick="bnbNav('upcoming')">
     <span class="bnb-icon">🗓</span><span style="font-size:8px">Events</span>
   </button>
   <button class="bnb-item" id="bnb-notes" onclick="bnbNav('notes')">
-    <span class="bnb-icon">📝</span>Note
+    <span class="bnb-icon">📝</span><span>Note</span>
   </button>
 </nav>
 </body>
