@@ -527,8 +527,8 @@ body {
 .card-body.open { display: block; }
 .card-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px,1fr)); gap: 9px; margin-top: 11px; }
 .cfield-label { font-size: 9.5px; color: var(--text3); text-transform: uppercase; letter-spacing: .7px; font-family: var(--mono); margin-bottom: 2px; }
-.cfield-value { font-size: 12.5px; color: var(--text); }
-.card-remarks { font-size: 12px; color: var(--text2); margin-top: 9px; font-style: italic; line-height: 1.55; }
+.cfield-value { font-size: 12.5px; color: var(--text);  white-space: pre-wrap; }
+.card-remarks { font-size: 12px; color: var(--text2); margin-top: 9px; font-style: italic; line-height: 1.55; white-space: pre-wrap; }
 .card-remarks-collapsed { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .card-remarks-expand { font-size: 11px; color: var(--accent); cursor: pointer; font-style: normal; margin-left: 4px; }
 .card-links { margin-top: 9px; display: flex; gap: 5px; flex-wrap: wrap; }
@@ -745,7 +745,7 @@ body {
 .sremark { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 7px; padding-bottom: 7px; border-bottom: 1px solid var(--border); }
 .sremark:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
 .sremark-body { flex: 1; }
-.sremark-text { font-size: 12.5px; color: var(--text2); line-height: 1.55; }
+.sremark-text { font-size: 12.5px; color: var(--text2); line-height: 1.55; white-space: pre-wrap; }
 .sremark-meta { font-size: 10px; font-family: var(--mono); color: var(--text3); margin-top: 3px; }
 .sremark-add { display: flex; gap: 6px; margin-top: 10px; align-items: flex-end; flex-wrap: wrap; }
 .sremark-add textarea { min-width: 0; }
@@ -1280,6 +1280,12 @@ function loadLocal(){
   }
   if(!state.sectionNames) state.sectionNames={ ibu:'India Business Update (IBU)', other:'Other Lives/Stories' };
   if(!state.lastActiveDate) state.lastActiveDate=todayStr();
+  // Load backups from separate key (kept local only, never pushed to Firestore)
+  try{
+    const bkp=localStorage.getItem('nd_backups');
+    if(bkp) state.backupSnapshots=JSON.parse(bkp);
+  }catch(e){}
+  if(!state.backupSnapshots) state.backupSnapshots={weekly:[],monthly:[],yearly:[]};
 }
 function saveLocal(){ try{ localStorage.setItem('nd_v5',JSON.stringify(state)); }catch(e){} }
 
@@ -1349,8 +1355,10 @@ function startRealtimeSync(){
           }
         }
       });
-      // Apply all other scalar fields from remote
+      // Apply all other scalar fields from remote — but preserve local-only fields
+      const localBackups=state.backupSnapshots; // backups are local-only
       Object.assign(state, incoming, mergedArrays, {archive:mergedArchive});
+      state.backupSnapshots=localBackups; // restore local backups after merge
       if(!state.archive) state.archive={};
       saveLocal();
       render(); renderDateStrip(); setSyncUI('live');
@@ -1360,8 +1368,33 @@ function startRealtimeSync(){
 }
 async function pushToCloud(){
   if(!fireDb) return;
-  try{ setSyncUI('syncing'); await fireDb.collection('nd').doc('data').set(state); setSyncUI('live'); }
-  catch(e){ setSyncUI('offline'); }
+  try{
+    setSyncUI('syncing');
+    // Strip backupSnapshots — they're large and stored locally only
+    // Also strip any undefined/function values that Firestore can't handle
+    const {backupSnapshots, ...cloudState} = state;
+    // Ensure size safety — estimate payload
+    const payload=JSON.stringify(cloudState);
+    if(payload.length > 900000){ // ~900KB safety limit (Firestore max is 1MB)
+      // Strip archive entries older than 90 days to reduce size
+      const cutoff=new Date(); cutoff.setDate(cutoff.getDate()-90);
+      const cutoffStr=cutoff.toISOString().slice(0,10);
+      const trimmedArchive={};
+      Object.entries(cloudState.archive||{}).forEach(([k,v])=>{
+        if(k>=cutoffStr || k.startsWith('week-') || k.startsWith('month-')) trimmedArchive[k]=v;
+      });
+      cloudState.archive=trimmedArchive;
+    }
+    await fireDb.collection('nd').doc('data').set(cloudState);
+    setSyncUI('live');
+  }catch(e){
+    setSyncUI('offline');
+    console.error('Firestore push failed:',e.message);
+    // Show user-visible error if it looks like a size issue
+    if(e.message&&(e.message.includes('size')||e.message.includes('limit')||e.code==='invalid-argument')){
+      toast('⚠ Sync failed: data too large. Try clearing old archive entries.');
+    }
+  }
 }
 function setSyncUI(s){
   const d=document.getElementById('sync-dot'), l=document.getElementById('sync-label');
@@ -1615,7 +1648,10 @@ function runBackup(type, period, fromBanner){
   if(type==='weekly')  state.lastWeeklyBackup=weekMondayStr(todayStr());
   if(type==='monthly') state.lastMonthlyBackup=todayStr().slice(0,7);
   if(type==='yearly')  state.lastYearlyBackup=todayStr().slice(0,4);
-  saveLocal();
+  // Save backups to a SEPARATE localStorage key — never pushed to Firestore (too large)
+  try{ localStorage.setItem('nd_backups', JSON.stringify(state.backupSnapshots)); }catch(e){}
+  // Only save dates to main state (not the snapshot content)
+  saveLocal();  // saveLocal only, NOT saveAndPush — backups stay local
   // Trigger download
   downloadBackupTxt(snap, type, period);
   if(fromBanner){ renderBackupBanners(); toast(capitalize(type)+' backup saved ✓'); }
@@ -2424,7 +2460,7 @@ function doExportJSON(){
     staffNames:  state.staffNames||{},
     sectionNames:state.sectionNames||{},
     customPlatformLabels: state.customPlatformLabels||[],
-    backupSnapshots: state.backupSnapshots||{weekly:[],monthly:[],yearly:[]},
+    backupSnapshots: {weekly:[],monthly:[],yearly:[]}, // snapshots are local-only, not exported
     lastWeeklyBackup:  state.lastWeeklyBackup||null,
     lastMonthlyBackup: state.lastMonthlyBackup||null,
     lastYearlyBackup:  state.lastYearlyBackup||null,
@@ -2697,7 +2733,10 @@ let _expandedRemarks=new Set();
 function toggleRemarksExpand(id){
   if(_expandedRemarks.has(id)) _expandedRemarks.delete(id); else _expandedRemarks.add(id);
   const el=document.getElementById('cr-'+id);
-  if(el) el.classList.toggle('card-remarks-collapsed',!_expandedRemarks.has(id));
+  if(el){
+    el.classList.toggle('card-remarks-collapsed',!_expandedRemarks.has(id));
+    el.style.whiteSpace=_expandedRemarks.has(id)?'pre-wrap':'';
+  }
   const btn=document.getElementById('cr-btn-'+id);
   if(btn) btn.textContent=_expandedRemarks.has(id)?'▲ collapse':'▼ expand';
 }
@@ -2730,7 +2769,7 @@ function remarksHTML(text, id, sec, storyId, archKey){
   const LIMIT=160;
   const needsCollapse=text.length>LIMIT;
   const collapsed=needsCollapse&&!_expandedRemarks.has(id);
-  return`<div class="card-remarks" onclick="event.stopPropagation()">💬 <span id="cr-${id}"${collapsed?' class="card-remarks-collapsed"':''}>${esc(text)}</span>${needsCollapse?`<span id="cr-btn-${id}" class="card-remarks-expand" onclick="event.stopPropagation();toggleRemarksExpand('${id}')">${collapsed?'▼ expand':'▲ collapse'}</span>`:''
+  return`<div class="card-remarks" onclick="event.stopPropagation()">💬 <span id="cr-${id}"${collapsed?' class="card-remarks-collapsed"':' style="white-space:pre-wrap"'}>${esc(text)}</span>${needsCollapse?`<span id="cr-btn-${id}" class="card-remarks-expand" onclick="event.stopPropagation();toggleRemarksExpand('${id}')">${collapsed?'▼ expand':'▲ collapse'}</span>`:''
   }${hasCRUD?`<span style="margin-left:8px">
     <button class="btn btn-ghost btn-xs" style="font-style:normal" onclick="event.stopPropagation();_editingMainRemark.add('${storyId}');render()" title="Edit remarks">✏</button>
     <button class="btn btn-ghost btn-xs btn-danger" style="font-style:normal" onclick="event.stopPropagation();if(confirm('Clear remarks?'))updateStory('${sec}','${storyId}',{remarks:''},${archKeyJS})" title="Clear remarks">🗑</button>
@@ -2811,6 +2850,7 @@ function setFilter(f,el){
   ui.filter=f;
   document.querySelectorAll('.fpill').forEach(p=>p.className='fpill');
   if(el) el.classList.add(f==='all'?'fa':f==='urgent'?'fu':f==='in-progress'?'fp':f==='completed'?'fd':f==='working'?'fw':'fwt');
+  else if(f==='all'){ const allPill=document.querySelector('.fpill'); if(allPill) allPill.classList.add('fa'); }
   if(f!=='all') SECTIONS.forEach(s=>ui.openSections.add(s.key));
   render();
 }
@@ -3111,10 +3151,19 @@ function deleteArchiveEntry(key){ if(!confirm('Delete "'+archiveLabel(key)+'"? C
 function openSyncModal(){
   if(document.getElementById('sync-modal')){ document.getElementById('sync-modal').remove(); return; }
   const cfg=getFireConfig();
+  // Calculate data size for health check
+  const {backupSnapshots, ...cloudState}=state;
+  const dataSize=new Blob([JSON.stringify(cloudState)]).size;
+  const sizeKB=Math.round(dataSize/1024);
+  const sizeStatus=sizeKB>800?'⚠️ Large ('+sizeKB+'KB — may affect sync)':sizeKB>400?'⚡ Medium ('+sizeKB+'KB)':'✅ Good ('+sizeKB+'KB)';
   const m=document.createElement('div'); m.className='modal-bg'; m.id='sync-modal';
   m.innerHTML=`<div class="modal" onclick="event.stopPropagation()">
     <h2>☁️ Cloud Sync Setup</h2>
     <p class="modal-sub">Sync between Mac and phone — free, using Google Firebase. One-time 3-minute setup.</p>
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px">
+      <strong>Data size:</strong> ${sizeStatus}<br>
+      <span style="color:var(--text3);font-size:11px">Meetings: ${(state.meetings||[]).length} · Tasks: ${(state.tasks||[]).length} · Archive entries: ${Object.keys(state.archive||{}).length} · Backups stored locally only</span>
+    </div>
     <ol class="setup-ol">
       <li class="setup-li">Go to <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> → sign in with Google.</li>
       <li class="setup-li"><strong>Create a project</strong> → name it anything → skip Analytics → Continue.</li>
@@ -3134,7 +3183,7 @@ function openSyncModal(){
       <button class="btn btn-ghost" onclick="document.getElementById('sync-modal').remove()">Skip</button>
       ${cfg?`<button class="btn btn-ghost btn-sm btn-danger" onclick="disconnectFirebase()">Disconnect</button>`:''}
     </div>
-    <p style="font-size:11px;color:var(--text3);margin-top:11px">Data stays in your own Firebase. Free plan = 20,000 writes/day.</p>
+    <p style="font-size:11px;color:var(--text3);margin-top:11px">Data stays in your own Firebase. Free plan = 20,000 writes/day. Backup snapshots are stored locally only.</p>
   </div>`;
   m.addEventListener('click',e=>{ if(e.target===m) m.remove(); });
   document.body.appendChild(m);
@@ -4412,7 +4461,7 @@ function renderTaskCard(t, today){
     <span class="chevron${isOpen?' open':''}" id="task-chev-${t.id}" style="margin-top:1px">▾</span>
   </div>
   <div class="task-body${isOpen?' open':''}" id="task-body-${t.id}">
-    ${t.notes?`<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:10px">${esc(t.notes)}</div>`:''}
+    ${t.notes?`<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:10px;white-space:pre-wrap">${esc(t.notes)}</div>`:''}
     <div class="task-btns">
       ${t.taskStatus==='done'
         ? `<button class="btn btn-not-done btn-sm" onclick="setTaskStatus('${t.id}','pending');event.stopPropagation()">↩ Reopen</button>`
@@ -4477,7 +4526,8 @@ function renderCombinedAccordion(archKey){
         ${uc?`<span class="sbadge sb-urgent">${uc} urgent</span>`:''}
         ${ic?`<span class="sbadge sb-in-progress">${ic} in progress</span>`:''}
         ${cc?`<span style="font-size:10px;color:var(--carry);background:var(--carry-bg);border:1px solid rgba(234,88,12,.2);padding:2px 7px;border-radius:12px;font-family:var(--mono)">🔁 ${cc}</span>`:''}
-        <span class="acc-count">${ibuActive.length} Lives · ${otherActive.length} Other</span>
+        ${(ui.filter!=='all'||ui.search)?`<span class="acc-count">${combinedFiltered.length} shown of ${ibuActive.length+otherActive.length}</span>`:`<span class="acc-count">${ibuActive.length} Lives · ${otherActive.length} Other</span>`}
+        ${ui.filter!=='all'?`<span style="font-size:10px;font-family:var(--mono);color:var(--accent);cursor:pointer" onclick="setFilter('all',null);event.stopPropagation()">✕ ${ui.filter}</span>`:''}
       </div>
       <span class="acc-chevron${isOpen?' open':''}" id="acc-chev-ibu">▾</span>
     </div>
@@ -4490,6 +4540,10 @@ function renderCombinedAccordion(archKey){
       </div>
       ${isIBUFormOpen?renderForm('ibu',archKey):''}
       ${isOtherFormOpen?renderForm('other',archKey):''}
+      ${(ui.filter!=='all'||ui.search)?`<div style="font-size:11.5px;font-family:var(--mono);color:var(--accent);background:rgba(207,102,64,.07);border:1px solid rgba(207,102,64,.2);border-radius:7px;padding:7px 10px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+        <span>🔍 Filter active: ${ui.filter!=='all'?ui.filter:'search'} — showing ${combinedFiltered.length} of ${ibuActive.length+otherActive.length}</span>
+        <button class="btn btn-ghost btn-xs" onclick="setFilter('all',null);ui.search='';const si=document.getElementById('search-input');if(si)si.value='';render();event.stopPropagation()">Clear ✕</button>
+      </div>`:''}
       <div id="stories-wrap-ibu">
         ${combinedFiltered.length
           ? combinedFiltered.map(s=>renderCard(s._subsec||'ibu',s,archKey)).join('')
@@ -5404,7 +5458,7 @@ function renderLeaveCard(l,today,isPast){
       <div><div class="cfield-label">Status</div><div class="cfield-value">${l.status==='approved'?'✅ Approved':'⏳ Pending'}</div></div>
     </div>
     <div class="card-remarks" onclick="event.stopPropagation()">
-      ${l.reason?`💬 ${esc(l.reason)} <button class="btn btn-ghost btn-xs" style="font-style:normal" onclick="event.stopPropagation();editLeave('${l.id}')" title="Edit reason">✏</button>`:`<button class="btn btn-ghost btn-xs" style="font-style:normal;color:var(--text3)" onclick="event.stopPropagation();editLeave('${l.id}')">+ Add reason</button>`}
+      ${l.reason?`<span style="white-space:pre-wrap">💬 ${esc(l.reason)}</span> <button class="btn btn-ghost btn-xs" style="font-style:normal" onclick="event.stopPropagation();editLeave('${l.id}')" title="Edit reason">✏</button>`:`<button class="btn btn-ghost btn-xs" style="font-style:normal;color:var(--text3)" onclick="event.stopPropagation();editLeave('${l.id}')">+ Add reason</button>`}
     </div>
     <div class="leave-btns">
       ${l.status==='pending'
