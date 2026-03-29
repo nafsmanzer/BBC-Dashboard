@@ -1133,9 +1133,9 @@ let state = {
   notes:[],   // structured notes array [{id,text,created,deadline_date,status}]
   employees:['Employee 1','Employee 2','Employee 3','Employee 4','Employee 5'],
   staffNames:{
-    correspondents:['Archana Shukla','Arunoday Mukharji'],
-    producers:['Neyaz Farooquee'],
-    shootEdit:['Pritam Roy','Vishnu Vardhan'],
+    correspondents:[],
+    producers:[],
+    shootEdit:[],
   },
   // backup tracking
   lastWeeklyBackup:null,
@@ -1157,6 +1157,7 @@ let ui = {
   notesDate: null,      // null = today; string = archive date being viewed in Notes tab
   tasksDate: null,      // null = today; string = archive date
   leavesDate: null,     // not date-specific but keep for symmetry
+  upcomingDate: null,   // null = today; string = archive date for Upcoming tab
   // per-section Working/Watching sub-filter: 'all' | 'working' | 'watching'
   wwFilter: { ibu:'all', other:'all' },
   // migrate
@@ -1270,7 +1271,7 @@ function loadLocal(){
   if(!state.meetings) state.meetings=[];
   if(!state.leaves) state.leaves=[];
   if(!state.notes) state.notes=[];
-  if(!state.staffNames) state.staffNames={correspondents:['Archana Shukla','Arunoday Mukharji'],producers:['Neyaz Farooquee'],shootEdit:['Pritam Roy','Vishnu Vardhan']};
+  if(!state.staffNames) state.staffNames={correspondents:[],producers:[],shootEdit:[]};
   if(!state.staffNames.correspondents) state.staffNames.correspondents=[];
   if(!state.staffNames.producers) state.staffNames.producers=[];
   if(!state.staffNames.shootEdit) state.staffNames.shootEdit=[];
@@ -1355,9 +1356,32 @@ function startRealtimeSync(){
           }
         }
       });
+      // Smart merge state.sections by story ID — newer updated/created wins
+      const mergedSections={};
+      SECTIONS.forEach(sec=>{
+        const localSec=state.sections[sec.key]||[];
+        const remoteSec=incoming.sections?.[sec.key]||[];
+        const secMap=new Map();
+        // Local first, then remote overrides — but compare timestamps for same ID
+        localSec.forEach(s=>{ if(s.id) secMap.set(s.id,s); });
+        remoteSec.forEach(s=>{
+          if(!s.id) return;
+          const existing=secMap.get(s.id);
+          if(!existing){
+            secMap.set(s.id,s);
+          } else {
+            // Remote wins only if it has a newer updated/created timestamp
+            const remoteTs=s.updated||s.created||0;
+            const localTs=existing.updated||existing.created||0;
+            if(remoteTs>=localTs) secMap.set(s.id,s); // remote is same age or newer
+          }
+        });
+        mergedSections[sec.key]=[...secMap.values()];
+      });
+
       // Apply all other scalar fields from remote — but preserve local-only fields
       const localBackups=state.backupSnapshots; // backups are local-only
-      Object.assign(state, incoming, mergedArrays, {archive:mergedArchive});
+      Object.assign(state, incoming, mergedArrays, {archive:mergedArchive, sections:mergedSections});
       state.backupSnapshots=localBackups; // restore local backups after merge
       if(!state.archive) state.archive={};
       saveLocal();
@@ -1428,12 +1452,25 @@ function checkDateChange(){
     });
     state.tasks.forEach(task=>{
       if(task.taskStatus==='done') return;
-      if(task.taskStatus==='not-done') return;  // not-done tasks stay put, never carry
+      if(task.taskStatus==='not-done'){
+        // Archive the not-done task to the previous day and remove it from active list
+        if(!state.archive[prev]){
+          state.archive[prev]={type:'day',label:archiveLabel(prev),sections:{},notes:'',created:Date.now()};
+          SECTIONS.forEach(s=>{state.archive[prev].sections[s.key]=[];});
+        }
+        if(!state.archive[prev].tasksLog) state.archive[prev].tasksLog=[];
+        if(!state.archive[prev].tasksLog.some(t=>t.id===task.id)){
+          state.archive[prev].tasksLog.push({...task, archivedOn:today});
+        }
+        return; // not-done tasks do NOT carry forward
+      }
       if(task.taskStatus==='postponed-to'&&task.postponeTo&&task.postponeTo>today) return;
       task.carriedForward=true;
       task.carriedFromDate=task.carriedFromDate||prev;
       task.carriedDays=(task.carriedDays||0)+1;
     });
+    // Remove not-done tasks from the active task list after archiving
+    state.tasks=state.tasks.filter(t=>t.taskStatus!=='not-done');
     let carried=0;
     const toAutoArchive=[];
 
@@ -1457,42 +1494,24 @@ function checkDateChange(){
       carried++;
     });
 
-    // ── Watching: archive if completed/not-done, carry otherwise ──
-    // (for requests section — other has own logic above)
+    // ── All other sections (requests, etc): archive terminal, carry active ──
     SECTIONS.filter(s=>!s.isUpcoming&&s.key!=='ibu'&&s.key!=='other').forEach(sec=>{
       (state.sections[sec.key]||[]).forEach(story=>{
-        if(story.mode==='working'){
-          if(story.status==='completed'||story.status==='on-hold'||story.status==='not-done'||story.status==='shelved') return;
-          if(story.status==='postponed'&&story.postponeTo&&story.postponeTo>today) return;
-          story.carriedForward=true;
-          story.carriedFromDate=story.carriedFromDate||prev;
-          story.carriedDays=(story.carriedDays||0)+1;
-          carried++;
+        // Always archive terminal-status stories regardless of mode
+        const terminal=['completed','not-done','shelved'];
+        if(terminal.includes(story.status)){
+          toAutoArchive.push({story, sec:sec.key});
           return;
         }
-        if(story.mode==='watching'){
-          if(story.status==='completed'||story.status==='not-done'){
-            toAutoArchive.push({story, sec:sec.key});
-            return;
-          }
-          if(story.status!=='on-hold'&&story.status!=='shelved'){
-            if(story.status==='postponed'&&story.postponeTo&&story.postponeTo>today) return;
-            story.carriedForward=true;
-            story.carriedFromDate=story.carriedFromDate||prev;
-            story.carriedDays=(story.carriedDays||0)+1;
-            carried++;
-          }
-          return;
-        }
-        if((story.status==='urgent'||story.status==='in-progress')
-           &&story.status!=='completed'&&story.status!=='on-hold'
-           &&story.status!=='not-done'&&story.status!=='shelved'){
-          if(story.status==='postponed'&&story.postponeTo&&story.postponeTo>today) return;
-          story.carriedForward=true;
-          story.carriedFromDate=story.carriedFromDate||prev;
-          story.carriedDays=(story.carriedDays||0)+1;
-          carried++;
-        }
+        // on-hold: stays, doesn't carry forward
+        if(story.status==='on-hold') return;
+        // postponed to a future date: stays
+        if(story.status==='postponed'&&story.postponeTo&&story.postponeTo>today) return;
+        // Everything else: carry forward
+        story.carriedForward=true;
+        story.carriedFromDate=story.carriedFromDate||prev;
+        story.carriedDays=(story.carriedDays||0)+1;
+        carried++;
       });
     });
     toAutoArchive.forEach(({story,sec})=>{
@@ -1971,7 +1990,20 @@ function addStory(sec,data,archKey){
 function updateStory(sec,id,data,archKey){
   const arr=getArr(sec,archKey); if(!arr) return;
   const i=arr.findIndex(s=>s.id===id);
-  if(i>=0){ arr[i]={...arr[i],...data}; saveAndPush(); scheduleReminder(arr[i]); }
+  if(i<0) return;
+  arr[i]={...arr[i],...data, updated:Date.now()};
+  // If this story is (or was) carried forward, propagate the update to every
+  // archive entry that holds a copy of the same story id.
+  if(!archKey){
+    const story=arr[i];
+    Object.keys(state.archive).forEach(dateKey=>{
+      const secArr=state.archive[dateKey]?.sections?.[sec];
+      if(!secArr) return;
+      const ai=secArr.findIndex(s=>s.id===id);
+      if(ai>=0) secArr[ai]={...secArr[ai],...data, updated:story.updated};
+    });
+  }
+  saveAndPush(); scheduleReminder(arr[i]);
 }
 function deleteStory(sec,id,archKey){
   const arr=getArr(sec,archKey); if(!arr) return;
@@ -2327,7 +2359,7 @@ function storyToText(s){
   }
   if(s.remarksList&&s.remarksList.length){
     s.remarksList.forEach((r,i)=>{
-      const dt=new Date(r.created).toLocaleDateString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+      const dt=new Date(r.created).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
       ln.push('  Remark '+(i+1)+'      : '+r.text+' ['+dt+']');
     });
   }
@@ -2569,6 +2601,8 @@ function sendMailto(subject, bodyText){
 function showEmailFallback(subject,body){
   // Fallback: show copy dialog if mailto is blocked
   if(document.getElementById('email-fallback-modal')) return;
+  // Store body on window so the button can access it without encoding issues
+  window._emailFallbackBody=body;
   const m=document.createElement('div'); m.className='modal-bg'; m.id='email-fallback-modal';
   m.innerHTML=`<div class="modal" onclick="event.stopPropagation()" style="max-width:620px">
     <h2>✉ Email Content</h2>
@@ -2579,18 +2613,46 @@ function showEmailFallback(subject,body){
     </div>
     <div>
       <div class="flabel" style="margin-bottom:4px">Body <span style="color:var(--text3);font-size:10px">(click to select all)</span></div>
-      <textarea class="ftextarea" style="min-height:260px;font-family:var(--mono);font-size:11px" readonly onclick="this.select()">${esc(body)}</textarea>
+      <textarea class="ftextarea" id="email-fallback-body" style="min-height:260px;font-family:var(--mono);font-size:11px" readonly onclick="this.select()">${esc(body)}</textarea>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-accent" onclick="copyEmailBody('${encodeURIComponent(body)}')">📋 Copy body</button>
-      <button class="btn btn-ghost" onclick="document.getElementById('email-fallback-modal').remove()">Close</button>
+      <button class="btn btn-accent" onclick="copyEmailBodyFromModal()">📋 Copy Body</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('email-fallback-modal').remove();window._emailFallbackBody=null">Close</button>
     </div>
   </div>`;
-  m.addEventListener('click',e=>{ if(e.target===m) m.remove(); });
+  m.addEventListener('click',e=>{ if(e.target===m){ m.remove(); window._emailFallbackBody=null; } });
   document.body.appendChild(m);
 }
+function copyEmailBodyFromModal(){
+  // First try Clipboard API; fall back to textarea select+execCommand
+  const body=window._emailFallbackBody||'';
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(body)
+      .then(()=>toast('Copied ✓'))
+      .catch(()=>_fallbackCopyTextarea());
+  } else {
+    _fallbackCopyTextarea();
+  }
+}
+function _fallbackCopyTextarea(){
+  const ta=document.getElementById('email-fallback-body');
+  if(!ta){ toast('Select all text in the box and copy manually'); return; }
+  ta.select(); ta.setSelectionRange(0,99999); // mobile
+  try{
+    document.execCommand('copy');
+    toast('Copied ✓');
+  }catch(e){
+    toast('Select all text in the box and copy manually');
+  }
+}
 function copyEmailBody(encodedBody){
-  navigator.clipboard.writeText(decodeURIComponent(encodedBody)).then(()=>toast('Copied ✓')).catch(()=>toast('Select all text in the box and copy manually'));
+  // Legacy shim — kept for backward compatibility
+  const body=decodeURIComponent(encodedBody);
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(body).then(()=>toast('Copied ✓')).catch(()=>toast('Select all text in the box and copy manually'));
+  } else {
+    toast('Select all text in the box and copy manually');
+  }
 }
 function doEmailSection(sec,archKey){
   const meta=SECTIONS.find(s=>s.key===sec);
@@ -3450,7 +3512,7 @@ function renderSearchHTML(){
         const sbL=s.status==='urgent'?'🔴':s.status==='in-progress'?'🟡':s.status==='completed'?'🟢':s.status==='not-done'?'⚫':s.status==='on-hold'?'🟣':'';
         const secBadge=r.sec==='ibu'?'IBU':r.sec==='other'?'Other':r.secLabel;
         html+=`<div style="display:flex;align-items:center;gap:10px;padding:11px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;"
-          onclick="clearTimeout(_searchTimer);setView(${r.archKey?`'archive','${r.archKey}'`:"'today',null"});setTimeout(()=>{ ui.openCards.add('${s.id}');render(); },100)">
+          onclick="clearTimeout(_searchTimer);ui.filter='all';setView(${r.archKey?`'archive','${r.archKey}'`:"'today',null"});setTimeout(()=>{ ui.openCards.add('${s.id}');ui.openSections.add('${r.sec==='other'?'ibu':r.sec}');render();setTimeout(()=>document.querySelector('[data-id=\\'${s.id}\\']')?.scrollIntoView({behavior:'smooth',block:'center'}),100); },150)">
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.title||'Untitled')}</div>
             <div style="font-size:11px;color:var(--text3);margin-top:2px;font-family:var(--mono)">${secBadge}${s.correspondent?' · '+esc(s.correspondent):''}${sbL?' · '+sbL:''}</div>
@@ -3536,10 +3598,10 @@ function renderTodayHTML(){
 function renderUpcomingView(){
   const today=todayStr();
   const sec=SECTIONS.find(s=>s.key==='upcoming');
-  let html=renderTabDateNav('leavesDate','Upcoming Events'); // reuse leavesDate as upcomingDate
+  let html=renderTabDateNav('upcomingDate','Upcoming Events');
   // For today: show live upcoming entries
   // For past dates: show archive entries
-  const cur=ui.leavesDate||today;
+  const cur=ui.upcomingDate||today;
   if(cur!==today && state.archive[cur]?.sections?.upcoming?.length){
     // Show archived upcoming entries for this date
     const entries=state.archive[cur].sections.upcoming||[];
@@ -3884,20 +3946,16 @@ function renderAccordion(sec,archKey){
   if(!stories.length&&!isFormOpen) html+=`<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-msg">No stories yet — click <strong>+ Add</strong></div></div>`;
   else stories.forEach(s=>{ html+=renderCard(sec.key,s,archKey); });
 
-  // Shelved toggle + shelved stories
+  // Shelved ribbon — always visible, displayed below active stories
   if(shelvedCount>0){
-    html+=`<div class="shelved-toggle" onclick="toggleShowShelved('${sec.key}')">
-      <span style="font-size:12px">${showShelved?'▾':'▸'}</span>
-      🗄 ${shelvedCount} shelved stor${shelvedCount===1?'y':'ies'} — ${showShelved?'hide':'show'}
-    </div>`;
-    if(showShelved){
-      html+=`<div class="shelved-section">`;
-      all.filter(s=>s.status==='shelved').forEach(s=>{ html+=renderCard(sec.key,s,archKey); });
-      html+=`</div>`;
-    }
+    html+=`<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px">`;
+    html+=`<div style="font-size:10px;font-family:var(--mono);color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">🗄 Shelved (${shelvedCount})</div>`;
+    html+=`<div class="shelved-section">`;
+    all.filter(s=>s.status==='shelved').forEach(s=>{ html+=renderCard(sec.key,s,archKey); });
+    html+=`</div></div>`;  // close shelved-section + border-top wrapper
   }
 
-  html+=`</div></div></div>`;
+  html+=`</div></div></div>`;  // close stories-wrap, acc-body, accordion
   return html;
 }
 function toggleShowShelved(secKey){
@@ -3963,7 +4021,7 @@ function buildStoryRemarksHTML(sec, s, archKey){
   let html='<div class="story-remarks-list">';
   html+=`<div style="font-size:10.5px;font-weight:700;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">🗒 Updates / Log${list.length?' ('+list.length+')':''}</div>`;
   list.forEach(r=>{
-    const dt=new Date(r.created).toLocaleDateString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    const dt=new Date(r.created).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
     if(editingId===r.id){
       html+=`<div class="sremark" onclick="event.stopPropagation()">
         <div class="sremark-body" style="width:100%">
@@ -3978,7 +4036,7 @@ function buildStoryRemarksHTML(sec, s, archKey){
       html+=`<div class="sremark" onclick="event.stopPropagation()">
         <div class="sremark-body">
           <div class="sremark-text">${esc(r.text)}</div>
-          <div class="sremark-meta">${dt}${r.edited?' · edited':''}</div>
+          <div class="sremark-meta">${dt}${r.edited?' · edited '+new Date(r.edited).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):''}</div>
         </div>
         <div style="display:flex;gap:3px;flex-shrink:0">
           <button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();_storyRemarkEditId['${s.id}']='${r.id}';render()" title="Edit">✏</button>
@@ -4408,7 +4466,7 @@ function renderTasksSection(){
 
 function renderTaskCard(t, today){
   const isOpen=ui_openTasks.has(t.id);
-  const isOverdue=t.deadline_date&&t.deadline_date<today&&t.taskStatus!=='done';
+  const isOverdue=t.deadline_date&&t.deadline_date<today&&t.taskStatus!=='done'&&t.taskStatus!=='not-done'&&t.taskStatus!=='transferred';
   const isCarried=t.carriedForward&&t.taskStatus!=='done';
   const createdDate=new Date(t.created).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 
@@ -4550,10 +4608,7 @@ function renderCombinedAccordion(archKey){
           : `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-msg">No stories yet</div></div>`
         }
       </div>
-      ${shelvedAll.length?`<div class="shelved-toggle" onclick="toggleShowShelved('ibu_combined')">
-        <span>${ui.showShelved.has('ibu_combined')?'▾':'▸'}</span>
-        🗄 ${shelvedAll.length} shelved — ${ui.showShelved.has('ibu_combined')?'hide':'show'}
-      </div>${ui.showShelved.has('ibu_combined')?`<div class="shelved-section">${[...ibuAll.filter(s=>s.status==='shelved').map(s=>renderCard('ibu',s,archKey)),...otherAll.filter(s=>s.status==='shelved').map(s=>renderCard('other',s,archKey))].join('')}</div>`:''}`:''}
+      ${shelvedAll.length?`<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px"><div style="font-size:10px;font-family:var(--mono);color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">🗄 Shelved (${shelvedAll.length})</div>${[...ibuAll.filter(s=>s.status==='shelved').map(s=>renderCard('ibu',s,archKey)),...otherAll.filter(s=>s.status==='shelved').map(s=>renderCard('other',s,archKey))].join('')}</div>`:''}
     </div>
   </div>`;
   return html;
@@ -5067,7 +5122,7 @@ function renderRemarksAccordion(){
     body+=`<div class="empty-state" style="padding:16px 0"><div class="empty-icon">📝</div><div class="empty-msg">No notes yet — click <strong>+ Add Note</strong></div></div>`;
   } else {
     active.forEach(n=>{
-      const created=new Date(n.created).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+      const created=new Date(n.created).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
       let dlChip='';
       if(n.deadline_date){
         const diff=new Date(n.deadline_date+'T00:00:00').getTime()-new Date(today+'T00:00:00').getTime();
@@ -5489,9 +5544,9 @@ function renderUpcomingRow(sec,s,archKey){
   const sbL=s.status==='urgent'?'Urgent':s.status==='in-progress'?'In Progress':s.status==='completed'?'Completed':s.status==='on-hold'?'On Hold':s.status==='not-done'?'Not Done':s.status==='postponed'?'Postponed':s.status==='shelved'?'Shelved':'';
   const sbC=s.status==='urgent'?'sb-urgent':s.status==='in-progress'?'sb-in-progress':s.status==='completed'?'sb-completed':s.status==='on-hold'?'sb-on-hold':s.status==='not-done'?'sb-not-done':s.status==='postponed'?'sb-postponed':s.status==='shelved'?'sb-shelved':'sb-not-started';
 
-  // Due chip
+  // Due chip — suppress for terminal statuses
   let dueChip='';
-  if(s.expected_date){
+  if(s.expected_date && s.status!=='not-done' && s.status!=='completed'){
     const diff=new Date(s.expected_date+'T00:00:00').getTime()-new Date(today+'T00:00:00').getTime();
     const days=Math.round(diff/86400000);
     if(s.expected_date<today) dueChip=`<span class="uc-chip uc-chip-overdue">⚠ Overdue</span>`;
@@ -5503,7 +5558,7 @@ function renderUpcomingRow(sec,s,archKey){
   let rowCls='uc-row';
   if(s.status==='completed') rowCls+=' ucr-completed';
   else if(s.status==='on-hold') rowCls+=' ucr-on-hold';
-  else if(s.expected_date&&s.expected_date<today) rowCls+=' ucr-overdue';
+  else if(s.status!=='not-done' && s.expected_date&&s.expected_date<today) rowCls+=' ucr-overdue';
 
   const typeLabel=s.expected_type&&s.expected_type!=='date'?` (${s.expected_type})`:'';
   const corrChip=s.correspondent?`<span class="uc-chip">👤 ${esc(s.correspondent)}</span>`:'';
@@ -5601,6 +5656,7 @@ function renderStoryCard(sec,s,archKey){
         ${carried?`<span class="carry-badge">🔁 +${s.carriedDays||1}d from ${s.carriedFromDate}</span>`:''}
         ${secObj.hasWW&&!archKey?`<span class="ww-badge ww-${mode}" id="wwbadge-${s.id}" onclick="toggleWWMode('${sec}','${s.id}',${archKeyJS});event.stopPropagation()" title="Click to cycle: None → Working → Watching">${wwLabel}</span>`:''}
         ${s.migratedAt?`<span class="migrated-tag">⇄ Migrated</span>`:''}
+        ${s.carriedForward&&!s.autoArchivedOn?`<span class="migrated-tag" style="color:var(--carry);border-color:rgba(234,88,12,.3);background:var(--carry-bg)">→ Continued</span>`:''}
         ${s.autoMigratedOn?`<span class="migrated-tag">🗓 Auto-migrated ${s.autoMigratedOn}</span>`:''}
       </div>
     </div>
@@ -5685,10 +5741,11 @@ function renderForm(sec,archKey){
   const isEdit=!!(archKey?ui.editMap[sec+'::'+archKey]:ui.editMap[sec]);
   const sfx='-'+sec+(archKey?'-arch':'');
   const archKeyJS=archKey?`'${archKey}'`:'null';
+  // Declare editStoryObj before early-return so it is available for both branches
+  const editStoryObj=isEdit?(getArr(sec,archKey)||[]).find(s=>s.id===(archKey?ui.editMap[sec+'::'+archKey]:ui.editMap[sec])):null;
   if(isUpcoming) return renderUpcomingForm(sec,archKey,isEdit,sfx,archKeyJS,editStoryObj);
 
   // For edit, load existing broadcast_times; for new, start with one empty slot
-  const editStoryObj=isEdit?(getArr(sec,archKey)||[]).find(s=>s.id===(archKey?ui.editMap[sec+'::'+archKey]:ui.editMap[sec])):null;
   const existingSlots=editStoryObj?.broadcast_times||[];
 
   return`<div class="form-wrap" id="story-form-${sec}${archKey?'-arch':''}">
